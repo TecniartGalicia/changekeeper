@@ -5,7 +5,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const EXT = { publisher: 'argalla', name: 'changekeeper', repo: 'TecniartGalicia/changekeeper', polarOrg: '' };
+// polarProduct: the Polar organization is shared with other extensions, so orders/keys MUST be filtered by product
+const EXT = { publisher: 'argalla', name: 'changekeeper', repo: 'TecniartGalicia/changekeeper', polarOrg: '', polarProduct: 'd2fe1738-fe61-41d1-81ba-776ce8cf91dd', polarBenefit: 'b05ca0d4-3c4a-40ce-82e4-282a5141275e' };
 const args = new Set(process.argv.slice(2));
 const UA = { 'User-Agent': 'changekeeper-metrics/1.0 (+https://github.com/TecniartGalicia/changekeeper)' };
 const nd = 'n/d';
@@ -87,8 +88,12 @@ async function polar() {
   const H = { Authorization: `Bearer ${tok}` };
   // an empty organization_id is a malformed filter (422): the token is already scoped to the org, so omit it
   const org = EXT.polarOrg ? `organization_id=${EXT.polarOrg}&` : '';
-  const o = await json(`https://api.polar.sh/v1/orders/?${org}limit=100`, { headers: H });
-  const k = await json(`https://api.polar.sh/v1/license-keys/?${org}limit=100`, { headers: H });
+  // the org sells more than one extension: without product_id these numbers would include the others
+  const prod = EXT.polarProduct ? `product_id=${EXT.polarProduct}&` : '';
+  const o = await json(`https://api.polar.sh/v1/orders/?${org}${prod}limit=100`, { headers: H });
+  // license keys ignore product_id: they are filtered by the benefit that grants them
+  const ben = EXT.polarBenefit ? `benefit_id=${EXT.polarBenefit}&` : '';
+  const k = await json(`https://api.polar.sh/v1/license-keys/?${org}${ben}limit=100`, { headers: H });
   if (o?.__err) return { orders: nd, revenue: nd, keys: nd, note: `Polar API: ${o.__err}` };
   const items = o.items || [];
   const paid = items.filter((x) => (x.net_amount ?? x.amount ?? 0) > 0);
