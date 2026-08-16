@@ -26,7 +26,6 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: node scripts/l10n-sync.mjs
-      - run: npm run build
       - name: Integration tests (Linux needs a display)
         if: runner.os == 'Linux'
         run: xvfb-run -a npm run test:integration

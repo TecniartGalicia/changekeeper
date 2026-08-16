@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { l10n } from 'vscode';
 import { Hunk } from '../../core/hunks';
+import { firstChangedLine } from '../../core/session';
 import { GuardManager } from '../guardManager';
 import { FileNode, HunkNode } from './tree';
 
@@ -10,12 +11,18 @@ import { FileNode, HunkNode } from './tree';
  *  - one summary CodeLens at the top of the file
  *  - decorations: added lines highlighted, deletions marked with a top border + hover showing what was removed
  */
-export class HunkCodeLensProvider implements vscode.CodeLensProvider {
+export class HunkCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposable {
   private readonly _onDidChangeCodeLenses = new vscode.EventEmitter<void>();
   readonly onDidChangeCodeLenses = this._onDidChangeCodeLenses.event;
+  private readonly sub: vscode.Disposable;
 
   constructor(private readonly manager: GuardManager) {
-    manager.onDidChange(() => this._onDidChangeCodeLenses.fire());
+    this.sub = manager.onDidChange(() => this._onDidChangeCodeLenses.fire());
+  }
+
+  dispose(): void {
+    this.sub.dispose();
+    this._onDidChangeCodeLenses.dispose();
   }
 
   async provideCodeLenses(document: vscode.TextDocument): Promise<vscode.CodeLens[]> {
@@ -40,7 +47,8 @@ export class HunkCodeLensProvider implements vscode.CodeLensProvider {
       new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), { title: l10n.t('Restore file'), command: 'changekeeper.restoreFile', arguments: [fileNode] }),
     );
     for (const h of view.hunks) {
-      const line = Math.min(Math.max(0, hunkFirstLine(h)), Math.max(0, document.lineCount - 1));
+      // the lens sits on the first changed line (not on the context above it), like the tree and the diff selection
+      const line = Math.min(Math.max(0, firstChangedLine(h)), Math.max(0, document.lineCount - 1));
       const range = new vscode.Range(line, 0, line, 0);
       const node = new HunkNode(guard, change, h.id);
       const status = change.hunks[h.id];

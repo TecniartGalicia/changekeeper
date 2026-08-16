@@ -47,7 +47,9 @@ export function buildReport(session: Session, opts: ReportOptions): string {
     lines.push(`- ${mark(f)} \`${f.path}\`${f.renamedFrom ? ` (from \`${f.renamedFrom}\`)` : ''} — ${statusOf(f)}${hunkIds.length ? ` · ${hunkIds.length} hunk(s)` : ''}${f.binary ? ' · binary' : ''}${f.tooLarge ? ' · too large' : ''}${f.baselineUnavailable ? ' · no baseline' : ''}${f.baselineUncertain ? ' · baseline uncertain' : ''}`);
     for (const id of hunkIds.sort((a, b) => (f.hunkMeta?.[a]?.newStart ?? 0) - (f.hunkMeta?.[b]?.newStart ?? 0))) {
       const m = f.hunkMeta?.[id];
-      lines.push(`  - ${f.hunks[id] === 'accepted' ? '[x]' : f.hunks[id] === 'discarded' ? '[~]' : '[ ]'} ${m ? `\`${m.header}\` (+${m.added} −${m.removed})` : id}`);
+      // critical files (.env, keys, CI…) may hold secrets on the very line that changed: keep only the range
+      const header = m ? (f.critical ? m.header.replace(/(@@ -\d+,\d+ \+\d+,\d+ @@).*/, '$1') : m.header) : id;
+      lines.push(`  - ${f.hunks[id] === 'accepted' ? '[x]' : f.hunks[id] === 'discarded' ? '[~]' : '[ ]'} ${m ? `\`${header}\` (+${m.added} −${m.removed})` : id}`);
     }
   }
   lines.push('');
@@ -99,8 +101,9 @@ export function suggestCommitMessage(session: Session): string {
   const type = guessType(paths);
   const scope = guessScope(paths);
   const verb = files.every((f) => f.kind === 'A') ? 'add' : files.every((f) => f.kind === 'D') ? 'remove' : 'update';
-  const subject = files.length === 1 ? `${verb} ${paths[0]}` : `${verb} ${files.length} files${scope ? ` in ${scope}` : ''}`;
-  const head = `${type}${scope && files.length > 1 ? `(${scope})` : ''}: ${subject}`.slice(0, 72);
+  const useScope = !!scope && files.length > 1;
+  const subject = files.length === 1 ? `${verb} ${paths[0]}` : `${verb} ${files.length} files`;
+  const head = `${type}${useScope ? `(${scope})` : ''}: ${subject}`.slice(0, 72);
   const body = files
     .sort(sortFiles)
     .slice(0, 30)
@@ -119,7 +122,7 @@ function guessType(paths: string[]): string {
   if (all(/(^|\/)(\.github|\.gitlab-ci\.yml|dockerfile|docker-compose|\.circleci)/) || all(/\.(ya?ml)$/)) return 'ci';
   if (all(/(package(-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|requirements.*\.txt|pyproject\.toml|cargo\.(toml|lock)|go\.(mod|sum))$/)) return 'build';
   if (any(/(^|\/)(migrations?|migrate)\//) || any(/\.sql$/)) return 'feat';
-  if (any(/(fix|bug|patch)/)) return 'fix';
+  if (any(/(^|[/._-])(bugfix|hotfix|fix|bug|patch)(es|ed)?([/._-]|$)/)) return 'fix';
   return 'feat';
 }
 

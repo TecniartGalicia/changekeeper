@@ -11,7 +11,6 @@
   },
   "categories": [
     "AI",
-    "SCM Providers",
     "Other"
   ],
   "keywords": [
@@ -90,7 +89,6 @@
     "minimatch": "^10.0.3"
   },
   "devDependencies": {
-    "@types/diff": "^8.0.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.17.0",
     "@types/vscode": "1.95.0",
@@ -301,15 +299,15 @@
         },
         {
           "command": "changekeeper.showReport",
-          "when": "changekeeper.hasSession"
+          "when": "changekeeper.hasReport"
         },
         {
           "command": "changekeeper.exportReport",
-          "when": "changekeeper.hasSession"
+          "when": "changekeeper.hasReport"
         },
         {
           "command": "changekeeper.copyCommitMessage",
-          "when": "changekeeper.hasSession"
+          "when": "changekeeper.hasReport"
         },
         {
           "command": "changekeeper.restoreSession",
@@ -337,7 +335,7 @@
         },
         {
           "command": "changekeeper.showReport",
-          "when": "view == changekeeper.changes && changekeeper.hasSession",
+          "when": "view == changekeeper.changes && changekeeper.hasReport",
           "group": "navigation@3"
         },
         {
@@ -367,7 +365,7 @@
         },
         {
           "command": "changekeeper.exportReport",
-          "when": "view == changekeeper.changes && changekeeper.hasSession",
+          "when": "view == changekeeper.changes && changekeeper.hasReport",
           "group": "3_report@1"
         },
         {
@@ -377,7 +375,7 @@
         },
         {
           "command": "changekeeper.copyCommitMessage",
-          "when": "view == changekeeper.changes && changekeeper.hasSession",
+          "when": "view == changekeeper.changes && changekeeper.hasReport",
           "group": "3_report@2"
         }
       ],

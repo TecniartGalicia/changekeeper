@@ -116,7 +116,9 @@ export class FolderGuard implements vscode.Disposable {
 
   reconfigure(): void {
     const next = this.loadConfig();
-    const changed = JSON.stringify({ ...next, workspaceOverrides: 0, pendingApproval: 0 }) !== JSON.stringify({ ...this.config, workspaceOverrides: 0, pendingApproval: 0 });
+    // codeLens/decorations apply live; only session-frozen settings (rules, limits, autoStart) warrant the notice
+    const frozen = (c: FolderConfig) => JSON.stringify({ a: c.autoStart, r: c.rules, l: c.limits });
+    const changed = frozen(next) !== frozen(this.config);
     this.config = next;
     // rules and limits are frozen for the running session by design (PLAN §4.2); they apply to the next one
     if (changed && this.hasSession && !this.configNoticeShown) {
@@ -264,6 +266,11 @@ export class FolderGuard implements vscode.Disposable {
     this.stopWatching();
     await this.engine.detach().catch(() => undefined);
     this.ownsLock = false;
+  }
+
+  /** Pro: install/remove the secret scanner (applies to files inspected from now on). */
+  setSecretScanner(scanner: EngineDeps['secretScanner']): void {
+    this.deps.secretScanner = scanner;
   }
 
   /** Whether purge/GC may touch this folder's store: we own the session, or nobody alive does. */

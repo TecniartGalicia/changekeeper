@@ -20,8 +20,8 @@ Los agentes con IDE propio ya ofrecen *Mantener / Deshacer* para las ediciones q
 | :-- | :-- |
 | **Línea base al instante** | En un repositorio git la línea base es el índice al empezar la sesión: no se copia nada hasta que un fichero cambia de verdad. Las carpetas sin git se copian (con límites). |
 | **Ve todos los cambios** | Ficheros escritos por cualquier proceso (CLI del agente, scripts, `git checkout`), ficheros editados en el editor, creados, borrados y renombrados. Los ignorados por git se saltan — salvo los **críticos** como `.env*`, que siempre se vigilan. |
-| **Revisión por bloques** | La vista ChangeKeeper lista los ficheros cambiados (críticos primero) y sus bloques. Pulsa un fichero para ver el diff nativo (línea base ↔ ahora); el margen del diff ofrece *Revertir bloque* y *ChangeKeeper: aceptar*; en el editor normal un CodeLens sobre cada bloque ofrece **Aceptar · Descartar · Diff** y las líneas cambiadas van resaltadas. |
-| **Descartar exactamente un bloque** | Descartar reescribe solo ese bloque con las líneas de la línea base — el resto conserva su contenido y su propio salto de línea. Los documentos abiertos se editan por el editor (con deshacer); los cerrados, en disco. |
+| **Revisión por bloques** | La vista ChangeKeeper lista los ficheros cambiados (críticos primero) y sus bloques. Pulsa un fichero para ver el diff nativo (línea base ↔ ahora): el margen propio de VS Code ofrece *Revertir bloque*, y la barra de título y el menú contextual del diff ofrecen **Aceptar / Descartar bloque bajo el cursor**; en el editor normal un CodeLens sobre cada bloque ofrece **Aceptar · Descartar · Diff** y las líneas cambiadas van resaltadas. |
+| **Descartar exactamente un bloque** | Descartar reescribe solo ese bloque con las líneas de la línea base — el resto conserva su contenido y su propio salto de línea. Los documentos abiertos se editan por el editor (deshacer con Ctrl+Z); los cerrados, en disco, guardando antes los bytes previos para que **Deshacer la última restauración** los devuelva. |
 | **Restaurar fichero / sesión, deshacer** | Restaura un fichero (o toda la sesión) a la línea base; los creados se borran. Todo lo sobrescrito se guarda, así que **Deshacer la última restauración** lo devuelve — y se niega a pisar ficheros que cambiaron después. |
 | **Ficheros críticos** | Migraciones, SQL, workflows de CI, Dockerfiles, `.env*`, carpetas auth/security, manifiestos y locks de paquetes, `.vscode`, `.claude`, `.cursor`, `.github` se marcan y se listan primero. Añade tus propios globs. |
 | **Informe de sesión** | Resumen en Markdown de la sesión (ficheros, bloques aceptados/descartados, críticos) con propuesta de mensaje de commit — expórtalo o pégalo en un PR. |
@@ -37,13 +37,14 @@ Los agentes con IDE propio ya ofrecen *Mantener / Deshacer* para las ediciones q
 
 ### Dónde viven los datos
 
-Las líneas base y el estado de sesión viven en el almacenamiento global de la extensión en esta máquina (`…/globalStorage/argalla.changekeeper/`), nunca dentro de tu repositorio ni en un servidor. Las líneas base de ficheros que cambiaron pueden contener secretos — los mismos que ya están en tu disco. Las sesiones cerradas se conservan `changekeeper.retentionDays` días (30 por defecto) o hasta `changekeeper.retentionMaxMB`; la sesión en curso nunca se borra. **ChangeKeeper: Purgar todos los datos** lo elimina todo. Ver [PRIVACY.es.md](PRIVACY.es.md).
+Las líneas base y el estado de sesión viven en el almacenamiento global de la extensión en esta máquina (`…/globalStorage/argalla.changekeeper/`), nunca dentro de tu repositorio ni en un servidor (los únicos ficheros que ChangeKeeper escribe en tu espacio de trabajo son los que descartas o restauras explícitamente, de forma atómica mediante un temporal `.ck-tmp` junto a ellos). Las líneas base de ficheros que cambiaron pueden contener secretos — los mismos que ya están en tu disco. Las sesiones cerradas se conservan `changekeeper.retentionDays` días (30 por defecto) o hasta `changekeeper.retentionMaxMB`; la sesión en curso nunca se borra. **ChangeKeeper: Purgar todos los datos** lo elimina todo. Ver [PRIVACY.es.md](PRIVACY.es.md).
 
 ### Limitaciones (las de verdad)
 
 - ChangeKeeper necesita VS Code abierto: lo que un agente hace con la ventana cerrada se recupera al reabrir (reconciliación por git), pero sin el detalle paso a paso.
 - La línea base es el estado de tus ficheros *cuando empezó la sesión*. Si el agente hace commit, checkout o stash a mitad se te avisa; **Nueva sesión** toma otra línea base.
-- Los bloques del margen del diff los calcula el propio comparador de VS Code y no siempre coinciden 1:1 con los bloques de ChangeKeeper; la vista ChangeKeeper y el CodeLens son la fuente de verdad.
+- Los bloques del margen del diff (*Revertir bloque*) los calcula el propio comparador de VS Code y no siempre coinciden 1:1 con los bloques de ChangeKeeper; la vista ChangeKeeper y el CodeLens son la fuente de verdad.
+- El informe de sesión lista rutas y, en ficheros no críticos, la primera línea cambiada de cada bloque; en los críticos (`.env*`, claves, CI) solo los rangos de líneas.
 - Los ficheros mayores que `changekeeper.maxFileSizeKB` (2 MB) y los binarios se registran pero no se comparan; los ficheros en Git LFS no tienen línea base.
 
 ## Ajustes

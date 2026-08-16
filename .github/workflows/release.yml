@@ -31,14 +31,15 @@ jobs:
           TAG="${GITHUB_REF_NAME#v}"
           PKG="$(node -p "require('./package.json').version")"
           test "$TAG" = "$PKG" || { echo "tag $TAG != package.json $PKG"; exit 1; }
-      # 0.1.x is free-only. From 0.2.0 (Pro) this step must refuse to publish when src/pro/polarConfig.ts is empty
-      # (see docs/PLAN.md §5 F4 and the reference workflow in ideasVs/plantillas).
-      - name: Pro guard (only when the Pro module exists)
+      # A build that advertises Pro (pricing "Trial") must not ship with an empty Polar config
+      # (docs/PLAN.md §5 F4 and the reference workflow in ideasVs/plantillas). Free-only builds skip this.
+      - name: Pro guard (only when the listing advertises Pro)
         run: |
-          if [ -f src/pro/polarConfig.ts ]; then
-            node -e "const s=require('fs').readFileSync('src/pro/polarConfig.ts','utf8'); const org=/POLAR_ORGANIZATION_ID = '([^']*)'/.exec(s)?.[1]; const url=/POLAR_CHECKOUT_URL = '([^']*)'/.exec(s)?.[1]; if(!org||!url){console.error('POLAR_ORGANIZATION_ID / POLAR_CHECKOUT_URL are empty in src/pro/polarConfig.ts — the listing advertises Pro; fill them (docs/TUS-TAREAS.md, block B) before tagging.'); process.exit(1);} console.log('Pro configured');"
+          PRICING="$(node -p "require('./package.json').pricing || 'Free'")"
+          if [ "$PRICING" = "Trial" ]; then
+            node -e "const s=require('fs').readFileSync('src/pro/polarConfig.ts','utf8'); const org=/POLAR_ORGANIZATION_ID = '([^']*)'/.exec(s)?.[1]; const url=/POLAR_CHECKOUT_URL = '([^']*)'/.exec(s)?.[1]; if(!org||!url){console.error('POLAR_ORGANIZATION_ID / POLAR_CHECKOUT_URL are empty in src/pro/polarConfig.ts — the listing advertises Pro (pricing Trial); fill them (docs/TUS-TAREAS.md, block B) before tagging.'); process.exit(1);} console.log('Pro configured');"
           else
-            echo "no Pro module in this version"
+            echo "free-only build (pricing $PRICING): no Pro guard"
           fi
       - run: npm run check
       - run: node scripts/l10n-sync.mjs

@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { l10n } from 'vscode';
 import { DiscardPlan } from '../core/engine';
 import { FileChange } from '../core/session';
-import { baselineUri, emptyUri } from './env';
+import { BASELINE_SCHEME, baselineUri, emptyUri } from './env';
 import { FolderGuard } from './folderGuard';
 import { GuardManager } from './guardManager';
 import { FileNode, HunkNode, Node, SessionNode } from './views/tree';
@@ -253,8 +253,14 @@ export class ReviewCommands {
     if (typeof startLine === 'number' && typeof endLine === 'number') {
       // VS Code's blocks and our hunks are computed by different differs: take every hunk that overlaps
       ids = view.hunks.filter((h) => h.newStart <= endLine && h.newStart + Math.max(1, h.newLines) > startLine).map((h) => h.id);
+    } else if (editor && editor.document.uri.scheme === BASELINE_SCHEME) {
+      // cursor on the baseline side of the diff: map through the baseline line numbers
+      const line = editor.selection.active.line + 1;
+      ids = view.hunks.filter((h) => line >= h.oldStart && line < h.oldStart + Math.max(1, h.oldLines)).map((h) => h.id);
     } else {
-      const line = (editor?.selection.active.line ?? 0) + 1;
+      // prefer the editor that shows the modified file (the right side of the diff, or the plain editor)
+      const target = vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === modifiedUri.toString()) ?? editor;
+      const line = (target?.selection.active.line ?? 0) + 1;
       ids = view.hunks.filter((h) => line >= h.newStart && line < h.newStart + Math.max(1, h.newLines)).map((h) => h.id);
     }
     return { guard, rel, ids };

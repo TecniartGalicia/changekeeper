@@ -74,6 +74,8 @@ export interface FileChange {
   fileAccepted?: boolean;
   firstSeenAt: string;
   lastChangeAt: string;
+  /** Pro: possible secrets in added lines (redacted; label + line) */
+  secrets?: { label: string; line: number; redacted: string }[];
 }
 
 export interface RestoreRecord {
@@ -81,6 +83,8 @@ export interface RestoreRecord {
   kind: 'file' | 'session' | 'hunk';
   /** path → sha256 of the bytes that were overwritten ('' = did not exist) */
   before: Record<string, string>;
+  /** path → sha256 of what the operation wrote (undo checks the file still holds it); baseline sha when absent */
+  after?: Record<string, string>;
   paths: string[];
   /** true when every path was put back */
   undone?: boolean;
@@ -104,6 +108,19 @@ export interface Session {
   /** paths silently dropped by the burst guard (for the report) */
   burstIgnored?: number;
   notes?: string[];
+  /** Pro: validation runs of this session (newest last) */
+  validations?: ValidationRun[];
+}
+
+export interface ValidationRun {
+  name: string;
+  command: string;
+  startedAt: string;
+  durationMs?: number;
+  /** undefined while running / when killed */
+  exitCode?: number;
+  status: 'running' | 'passed' | 'failed' | 'timeout' | 'error';
+  trigger: 'manual' | 'afterReview' | 'onSessionEnd';
 }
 
 export interface SessionCounters {
@@ -195,7 +212,8 @@ export function firstChangedLine(h: Hunk): number {
 }
 
 function headerOf(h: Hunk): string {
-  const firstChanged = h.lines.find((l) => l.type !== ' ')?.text.trim() ?? '';
+  let firstChanged = h.lines.find((l) => l.type !== ' ')?.text.trim() ?? '';
+  if (firstChanged.length > 100) firstChanged = firstChanged.slice(0, 100) + '…';
   return `@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@ ${firstChanged}`.trimEnd();
 }
 

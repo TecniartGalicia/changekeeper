@@ -60,6 +60,8 @@ export interface EngineDeps {
   /** called (synchronously, possibly often) whenever the session state changed; the UI debounces */
   onChanged?: () => void;
   pid?: number;
+  /** Pro: scans the added lines of a change; findings are stored (redacted) on the change */
+  secretScanner?: (lines: { line: number; text: string }[]) => { label: string; line: number; redacted: string }[];
 }
 
 export interface FileView {
@@ -242,6 +244,11 @@ export class Engine {
       await this.deps.store.writeMaterialized(this.session.id, this.materialized);
       this.materializedDirty = false;
     }
+  }
+
+  /** Persist + notify after an external mutation of the session (validation runs, labels…). */
+  touch(): void {
+    this.schedulePersist();
   }
 
   private schedulePersist(): void {
@@ -646,6 +653,8 @@ export class Engine {
     const abs = fromRelPosix(this.folder, rel);
     const current = await this.readCurrent(rel, abs);
     if (this.writingOurselves.get(k) === current.sha) this.writingOurselves.delete(k);
+    // nothing moved since the last inspection (typing pauses, CodeLens/decoration refreshes): keep the cached view
+    if (existing && existing.currentSha === current.sha && this.viewCache.has(k) && (current.exists ? current.sha !== '' : existing.kind === 'D')) return existing;
     const nowIso = this.now().toISOString();
     const row = this.baselineRow(rel);
     // Fast path: a clean tracked file re-saved with identical bytes matches its index blob without
@@ -693,6 +702,7 @@ export class Engine {
     ch.baselineUnavailable = base.kind === 'unavailable' ? base.reason : undefined;
     ch.baselineUncertain = uncertain || undefined;
     ch.eolOnly = undefined;
+    let hunkBase: BaselineResolution = base;
     if (base.kind === 'none') {
       // new file; a rename when a deleted file has exactly these bytes as baseline
       const renamedFrom = await this.findDeletedTwin(current.sha, rel);
@@ -707,16 +717,21 @@ export class Engine {
       ch.kind = 'M';
       ch.renamedFrom = undefined;
     }
+    // a renamed file is compared with the baseline of its source (same content at rename time; later edits show as hunks)
+    if (ch.kind === 'R' && ch.renamedFrom) {
+      const rb = await this.resolveBaseline(ch.renamedFrom);
+      if (rb.kind === 'bytes') hunkBase = rb;
+    }
     // hunks
     let hunks: Hunk[] | undefined;
-    if (base.kind === 'bytes' && !current.binary && !current.tooLarge && !looksBinary(base.bytes) && current.text !== undefined) {
-      const bt = decodeText(base.bytes);
+    if (hunkBase.kind === 'bytes' && !current.binary && !current.tooLarge && !looksBinary(hunkBase.bytes) && current.text !== undefined) {
+      const bt = decodeText(hunkBase.bytes);
       const baseLines = splitLines(bt.text);
       const curLines = splitLines(current.text);
       hunks = computeHunks(plainLines(baseLines), plainLines(curLines));
       if (hunks.length === 0) ch.eolOnly = true; // bytes differ but no line differs: EOL / BOM / encoding only
       this.viewCache.set(k, { change: ch, hunks, baselineText: bt.text, currentText: current.text, baselineBom: bt.bom, encoding: current.encoding, currentSha: current.sha });
-    } else if (base.kind === 'none' && !current.binary && !current.tooLarge && current.text !== undefined) {
+    } else if (hunkBase.kind === 'none' && !current.binary && !current.tooLarge && current.text !== undefined) {
       const curLines = splitLines(current.text);
       hunks = computeHunks([], plainLines(curLines));
       this.viewCache.set(k, { change: ch, hunks, baselineText: '', currentText: current.text, baselineBom: false, encoding: current.encoding, currentSha: current.sha });
@@ -724,6 +739,21 @@ export class Engine {
       this.viewCache.set(k, { change: ch, currentSha: current.sha });
     }
     reconcileHunks(ch, hunks ?? []);
+    if (this.deps.secretScanner && hunks && hunks.length) {
+      const added: { line: number; text: string }[] = [];
+      for (const h of hunks) {
+        let line = h.newLines === 0 ? h.newStart : h.newStart - 1;
+        for (const l of h.lines) {
+          if (l.type === '-') continue;
+          if (l.type === '+') added.push({ line: line + 1, text: l.text });
+          line++;
+        }
+      }
+      const found = this.deps.secretScanner(added);
+      ch.secrets = found.length ? found.slice(0, 20) : undefined;
+    } else if (!this.deps.secretScanner) {
+      ch.secrets = undefined;
+    }
     session.changes[k] = ch;
     this.schedulePersist();
     return ch;
@@ -913,9 +943,15 @@ export class Engine {
       await this.handlePath(plan.rel);
       return { ok: false, reason: 'stale' };
     }
-    this.writingOurselves.set(k, sha256(plan.newBytes));
+    // keep what we overwrite so "Undo last restore" can put it back
+    const beforeSha = now.bytes ? await this.deps.store.putBlob(now.bytes) : '';
+    const afterSha = sha256(plan.newBytes);
+    this.writingOurselves.set(k, afterSha);
     await this.deps.fs.writeFile(abs, plan.newBytes);
     this.markDiscarded(plan.rel, hunkId);
+    if (this.session) {
+      this.session.restores.push({ at: this.now().toISOString(), kind: 'hunk', before: { [plan.rel]: beforeSha }, after: { [plan.rel]: afterSha }, paths: [plan.rel] });
+    }
     await this.handlePath(plan.rel);
     return { ok: true };
   }
@@ -1010,8 +1046,12 @@ export class Engine {
       if (undonePaths.has(rel)) continue;
       const abs = fromRelPosix(this.folder, rel);
       const cur = await this.deps.fs.readFile(abs);
-      const base = await this.resolveBaseline(rel);
-      const expectedSha = base.kind === 'bytes' ? base.sha : '';
+      let expectedSha: string;
+      if (record.after && rel in record.after) expectedSha = record.after[rel];
+      else {
+        const base = await this.resolveBaseline(rel);
+        expectedSha = base.kind === 'bytes' ? base.sha : '';
+      }
       const curSha = cur ? sha256(cur) : '';
       if (!force && curSha !== expectedSha) {
         out.push({ rel, status: 'skipped', reason: 'changed-since' });

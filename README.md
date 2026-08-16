@@ -20,8 +20,8 @@ Agents with their own IDE already offer *Keep / Undo* for the edits they make th
 | :-- | :-- |
 | **Baseline in a blink** | In a git repository the baseline is the index at session start — nothing is copied until a file actually changes. Non-git folders are copied (within limits). |
 | **Sees every change** | Files written by any process (agent CLI, scripts, `git checkout`), files edited in the editor, created, deleted and renamed files. Git-ignored files are skipped — except **critical** ones like `.env*`, which are always watched. |
-| **Review hunk by hunk** | The ChangeKeeper view lists changed files (critical ones first) and their hunks. Click a file for the native diff (baseline ↔ now); the diff gutter offers *Revert block* and *ChangeKeeper: Accept*; in the normal editor a CodeLens above each hunk offers **Accept · Discard · Diff** and changed lines are highlighted. |
-| **Discard exactly one hunk** | Discarding rewrites only that block with the baseline lines — every other line keeps its content and its own line ending. Open documents are edited through the editor (undoable); closed ones on disk. |
+| **Review hunk by hunk** | The ChangeKeeper view lists changed files (critical ones first) and their hunks. Click a file for the native diff (baseline ↔ now): VS Code's own gutter offers *Revert block*, and the diff's title bar and context menu offer **Accept / Discard hunk at cursor**; in the normal editor a CodeLens above each hunk offers **Accept · Discard · Diff** and changed lines are highlighted. |
+| **Discard exactly one hunk** | Discarding rewrites only that block with the baseline lines — every other line keeps its content and its own line ending. Open documents are edited through the editor (undoable with Ctrl+Z); closed ones on disk, with the previous bytes kept so **Undo last restore** can put them back. |
 | **Restore file / session, undo** | Restore a file (or the whole session) to the baseline; created files are deleted. Everything overwritten is kept, so **Undo last restore** puts it back — and refuses to overwrite files that changed since. |
 | **Critical files** | Migrations, SQL, CI workflows, Dockerfiles, `.env*`, auth/security folders, package manifests and lock files, `.vscode`, `.claude`, `.cursor`, `.github` are flagged and listed first. Add your own globs. |
 | **Session report** | A Markdown summary of the session (files, hunks accepted/discarded, critical files) with a suggested commit message — export it or paste it in a PR. |
@@ -37,13 +37,14 @@ Agents with their own IDE already offer *Keep / Undo* for the edits they make th
 
 ### Where the data lives
 
-Baselines and session state live in the extension's global storage on this machine (`…/globalStorage/argalla.changekeeper/`), never inside your repository and never on a server. Baselines of files that changed can contain secrets — the same secrets that are already on your disk. Closed sessions are kept for `changekeeper.retentionDays` (30 by default) or until `changekeeper.retentionMaxMB`; the running session is never deleted. **ChangeKeeper: Purge All Data** wipes everything. See [PRIVACY.md](PRIVACY.md).
+Baselines and session state live in the extension's global storage on this machine (`…/globalStorage/argalla.changekeeper/`), never inside your repository and never on a server (the only files ChangeKeeper writes in your workspace are the ones you explicitly discard or restore, written atomically through a temporary `.ck-tmp` next to them). Baselines of files that changed can contain secrets — the same secrets that are already on your disk. Closed sessions are kept for `changekeeper.retentionDays` (30 by default) or until `changekeeper.retentionMaxMB`; the running session is never deleted. **ChangeKeeper: Purge All Data** wipes everything. See [PRIVACY.md](PRIVACY.md).
 
 ### Limitations (honest ones)
 
 - ChangeKeeper needs VS Code open: what an agent does while the window is closed is caught up when you reopen (git-based reconciliation), but without the per-step detail.
 - The baseline is what your files looked like *when the session started*. If the agent commits, checks out or stashes mid-session you are told; **New Session** re-baselines.
-- The diff gutter blocks are computed by VS Code's own differ and do not always coincide 1:1 with ChangeKeeper's hunks; the ChangeKeeper view and the CodeLens are the source of truth.
+- The diff gutter blocks (*Revert block*) are computed by VS Code's own differ and do not always coincide 1:1 with ChangeKeeper's hunks; the ChangeKeeper view and the CodeLens are the source of truth.
+- The session report lists file paths and, for non-critical files, the first changed line of each hunk; for critical files (`.env*`, keys, CI) only the line ranges are included.
 - Files larger than `changekeeper.maxFileSizeKB` (2 MB) and binaries are tracked but not diffed; files stored with Git LFS have no baseline.
 
 ## Settings

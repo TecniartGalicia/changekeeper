@@ -146,3 +146,33 @@ Revisor independiente sobre `166639f` (copia limpia): `npm run check`, `test:int
 Verificado OK por el revisor: contratos `vscode.changes`/`vscode.diff`/`<viewId>.focus`/context keys/ThemeColors/codicons; activación y colas; watchers y carrera doc-recarga (curada por `onDidChangeTextDocument`); escrituras propias sin cambios fantasma; discard por WorkspaceEdit (normal y EOF); HEAD watcher; package.json/nls/l10n; content provider.
 
 **Estado tras F1a+F1b:** `npm run check` (56 unit) e integración 8/8 en VS Code 1.133 (Windows). Commit `7f3db21`.
+
+## F2 + F3 · Revisión inline, informe y publicación 0.1.0 — auditoría del 2026-08-16
+
+Revisor independiente sobre `b0f8484` (copia limpia): `npm run check`, `l10n-sync`, `.vsix` descomprimido, `test:integration` (dos veces + sonda propia de CodeLens), APIs/colores/codicons contra la fuente de VS Code 1.95, SHAs de acciones contra `git ls-remote`. 19 hallazgos (4 medios); confirmó por muestreo que A1, A2, A3, A10, B1, B3, B6 y B7 están aplicados.
+
+| # | Sev. | Hallazgo (resumen) | Resolución |
+|---|------|--------------------|------------|
+| C1 | Media | README/CHANGELOG/PLAN anunciaban «ChangeKeeper: Accept» en el gutter (retirado en B1) | Textos reescritos: gutter nativo = *Revert block*; **Accept/Discard hunk at cursor** en título y menú contextual del diff; PLAN §4.4 corregido |
+| C2 | Media | El informe incluía la primera línea cambiada de cada hunk también en ficheros críticos (`.env` → valor del secreto) | En críticos solo el rango `@@ … @@`; cabecera acotada a 100 chars; PRIVACY y README lo dicen |
+| C3 | Media | Al teclear en un fichero con cambios: CodeLens/decoraciones + debounce → 2-3 recomputaciones y lecturas por pausa | `processPath` devuelve el cambio cacheado cuando el sha no varió; el resto sirve la caché |
+| C4 | Media | Discard con documento cerrado escribía en disco sin copia previa (sin undo; A/R = fichero entero) | `applyDiscardToDisk` guarda los bytes previos y registra `RestoreRecord{kind:'hunk', before, after}`; `undoRestore` verifica contra `after`; docs alineados |
+| C5 | Baja | CodeLens en la línea de contexto | `firstChangedLine(h)` |
+| C6 | Baja | Cursor en el lado base del diff | Se usa el editor del lado modificado; en el lado base se mapea por `oldStart/oldLines` |
+| C7 | Baja | Tipo de commit `fix` sin límites de palabra; scope duplicado | Regex acotada; sin «in scope» cuando ya va como `(scope)`; tests |
+| C8 | Baja | `headerOf` sin tope | 100 chars + «…» |
+| C9 | Baja | Aviso «settings changed» al alternar CodeLens | Solo comparan `autoStart/rules/limits` |
+| C10 | Baja | Informe inaccesible tras Stop | Context key `changekeeper.hasReport` (sesión activa o detenida en memoria) |
+| C11 | Baja | Renombrados: hunks contra vacío | Hunks contra la línea base de `renamedFrom` |
+| C12 | Baja | Sin unit tests de informe ni de CodeLens; e2e dependía del portapapeles | `report.test.ts`; e2e ejecuta `vscode.executeCodeLensProvider` y acepta desde el lens; portapapeles tolerante |
+| C13 | Baja | `@types/diff` stub | Eliminado (lock regenerado) |
+| C14 | Baja | Triple build en CI; suscripción del CodeLens sin disponer | Paso `build` retirado; `dispose()` |
+| C15 | Baja | Sin avisos de terceros en el vsix | `THIRD_PARTY_NOTICES.md` (diff BSD-3, minimatch BlueOak-1.0.0, ignore MIT) incluido |
+| C16 | Baja | PRIVACY «nada se escribe en el workspace» vs `.ck-tmp` | Matizado en PRIVACY (EN/ES) y README |
+| C17 | Baja | CHANGELOG/PRIVACY mencionan un Pro futuro | Aceptado (PLAN §2.6 lo permite fuera de la `description`) |
+| C18 | Baja | PLAN.md público con cabecera vieja y referencias internas | `docs/PLAN.md` pasa a gitignored (interno, como TUS-TAREAS.md); cabecera actualizada |
+| C19 | Baja | Categoría «SCM Providers» sin proveedor SCM | `["AI", "Other"]` |
+
+Verificado OK por el revisor: CodeLens (codicons, rangos, comandos con `FileNode/HunkNode`, ajuste `codeLens`), decoraciones (colores válidos, mapeo, refresh), informe y export, package.json/Marketplace (description sin frases del filtro, keywords, `pricing: Free`, `preview`, capabilities, activación, l10n/nls), APIs ≤ 1.95, `.vsix` (15 ficheros, sin restos Pro ni red), CI/release (SHAs, matriz, idempotencia), docs.
+
+**Estado tras F2+F3:** 58 unit + 8 integración en verde; `.vsix` 0.1.0 empaquetado. Siguiente: repo público, secretos, tag `v0.1.0`.

@@ -122,6 +122,8 @@ export class GuardManager implements vscode.Disposable {
     const hasSession = this.hasAnySession();
     const hasChanges = this.all().some((g) => g.hasSession && g.engine.changes().length > 0);
     const canUndo = this.all().some((g) => g.hasSession && !!g.engine.lastUndoableRestore());
+    const hasReport = this.all().some((g) => !!g.engine.session);
+    void vscode.commands.executeCommand('setContext', 'changekeeper.hasReport', hasReport);
     void vscode.commands.executeCommand('setContext', 'changekeeper.hasSession', hasSession);
     void vscode.commands.executeCommand('setContext', 'changekeeper.hasChanges', hasChanges);
     void vscode.commands.executeCommand('setContext', 'changekeeper.canUndoRestore', canUndo);
