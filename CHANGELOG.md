@@ -2,6 +2,12 @@
 
 All notable changes to ChangeKeeper are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-08-16
+
+### Added
+- A demo GIF and three screenshots in the listing (recorded from a real session: an agent edits from the shell, the changes show up with critical files first, a hunk is discarded from the diff and the session report redacts the secret it found). They are served from the repository, so the extension package does not grow.
+- `npm run demo`: the scripted session used to record them, so the media can be reproduced when the UI changes.
+
 ## [0.2.0] - 2026-08-16
 
 ### Added

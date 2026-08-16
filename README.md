@@ -5,10 +5,22 @@
 **Keep, review hunk by hunk and roll back every change your AI coding agent makes — including the ones made from the shell.** ChangeKeeper takes a baseline of your workspace, watches what changes afterwards (from *any* process: Claude Code, Codex, OpenCode, Cline, Copilot agent mode, Cursor, a script, `sed -i`, or you) and lets you review each change block by block, discard the bad ones and restore a file — or the whole session — with one click. Local-first, no telemetry, no account.
 
 > **Not affiliated with, endorsed by, or sponsored by any agent vendor.** Claude Code, Codex, Copilot, Cursor and other names belong to their owners. ChangeKeeper only watches your files.
->
+
 > [Leer en español](README.es.md)
 
 ---
+
+![ChangeKeeper: an agent edits from the shell, the changes show up, a hunk is discarded and the session report is produced](https://raw.githubusercontent.com/TecniartGalicia/changekeeper/main/media/shots/changekeeper-demo.gif)
+
+*A CLI agent edits `orders.ts`, rewrites a key in `.env` and drops a table in a new migration. ChangeKeeper lists all three (critical files first), the bad hunk is discarded from the diff, and the session report redacts the secret it found.*
+
+## What it looks like
+
+| | |
+| :-- | :-- |
+| ![Changed files with critical ones first, and the Accept/Discard CodeLens above each hunk](https://raw.githubusercontent.com/TecniartGalicia/changekeeper/main/media/shots/01-changes-and-codelens.png) | **Every change, critical files first.** `.env` shows *1 possible secret*, the new migration is flagged, and each hunk carries **Accept · Discard** right above it. |
+| ![Native diff between the baseline and the file as it is now](https://raw.githubusercontent.com/TecniartGalicia/changekeeper/main/media/shots/02-diff-baseline-vs-now.png) | **Baseline ↔ now in the native diff.** The agent silently dropped the stock reservation and the input validation; discarding that hunk restores those lines and leaves the rest untouched. |
+| ![Session report in Markdown with critical files, hunks, redacted secrets and a suggested commit message](https://raw.githubusercontent.com/TecniartGalicia/changekeeper/main/media/shots/03-session-report.png) | **Session report** in Markdown: critical files, hunks, secret findings (redacted) and a suggested commit message you can copy. |
 
 ## Why this exists
 

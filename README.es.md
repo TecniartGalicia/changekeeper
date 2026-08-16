@@ -5,10 +5,22 @@
 **Guarda, revisa bloque a bloque y deshaz todos los cambios que hace tu agente de programación — incluidos los que hace desde la shell.** ChangeKeeper toma una línea base de tu espacio de trabajo, vigila lo que cambia después (desde *cualquier* proceso: Claude Code, Codex, OpenCode, Cline, Copilot en modo agente, Cursor, un script, `sed -i` o tú) y te deja revisar cada cambio por bloques, descartar los malos y restaurar un fichero — o la sesión entera — con un clic. Local, sin telemetría, sin cuenta.
 
 > **Sin relación con ningún fabricante de agentes.** Claude Code, Codex, Copilot, Cursor y demás nombres pertenecen a sus dueños. ChangeKeeper solo vigila tus ficheros.
->
+
 > [Read in English](README.md)
 
 ---
+
+![ChangeKeeper: un agente edita desde la terminal, los cambios aparecen, se descarta un bloque y se genera el informe de sesión](https://raw.githubusercontent.com/TecniartGalicia/changekeeper/main/media/shots/changekeeper-demo.gif)
+
+*Un agente de terminal edita `orders.ts`, reescribe una clave en `.env` y borra una tabla en una migración nueva. ChangeKeeper los lista (críticos primero), se descarta el bloque malo desde el diff y el informe de sesión redacta el secreto que encontró.*
+
+## Qué se ve
+
+| | |
+| :-- | :-- |
+| ![Ficheros cambiados con los críticos primero y el CodeLens Aceptar/Descartar sobre cada bloque](https://raw.githubusercontent.com/TecniartGalicia/changekeeper/main/media/shots/01-changes-and-codelens.png) | **Todos los cambios, críticos primero.** `.env` avisa de *1 posible secreto*, la migración nueva sale marcada y cada bloque lleva **Aceptar · Descartar** justo encima. |
+| ![Diff nativo entre la línea base y el fichero tal y como está ahora](https://raw.githubusercontent.com/TecniartGalicia/changekeeper/main/media/shots/02-diff-baseline-vs-now.png) | **Línea base ↔ ahora en el diff nativo.** El agente se cargó sin avisar la reserva de stock y la validación de entrada; al descartar ese bloque vuelven esas líneas y el resto se queda como está. |
+| ![Informe de sesión en Markdown con críticos, bloques, secretos redactados y mensaje de commit sugerido](https://raw.githubusercontent.com/TecniartGalicia/changekeeper/main/media/shots/03-session-report.png) | **Informe de sesión** en Markdown: críticos, bloques, hallazgos de secretos (redactados) y un mensaje de commit sugerido para copiar. |
 
 ## Por qué existe
 
