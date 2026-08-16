@@ -1,0 +1,506 @@
+{
+  "name": "changekeeper",
+  "displayName": "ChangeKeeper",
+  "description": "Keep, review hunk by hunk and roll back every change your AI coding agent makes — including edits made from the shell. Works with Claude Code, Codex, Copilot, Cursor and more. Local-first, no telemetry. Not affiliated with any agent vendor.",
+  "version": "0.1.0",
+  "publisher": "argalla",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "AI",
+    "SCM Providers",
+    "Other"
+  ],
+  "keywords": [
+    "ai agent",
+    "claude code",
+    "codex",
+    "copilot",
+    "cursor",
+    "opencode",
+    "review changes",
+    "rollback",
+    "checkpoint",
+    "hunk",
+    "diff",
+    "undo",
+    "snapshot",
+    "guardrail"
+  ],
+  "pricing": "Free",
+  "preview": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TecniartGalicia/changekeeper.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TecniartGalicia/changekeeper/issues"
+  },
+  "homepage": "https://github.com/TecniartGalicia/changekeeper#readme",
+  "qna": "https://github.com/TecniartGalicia/changekeeper/discussions",
+  "galleryBanner": {
+    "color": "#0F172A",
+    "theme": "dark"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "%cap.untrusted%",
+      "restrictedConfigurations": [
+        "changekeeper.exclude",
+        "changekeeper.excludeDefaults",
+        "changekeeper.criticalGlobs"
+      ]
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "%cap.virtual%"
+    }
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "l10n": "./l10n",
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.mjs --production",
+    "watch": "node esbuild.mjs --watch",
+    "compile-tests": "tsc -p tsconfig.test.json",
+    "lint": "eslint src",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run compile-tests && mocha \"out/test/unit/**/*.test.js\"",
+    "test:integration": "npm run compile-tests && node ./out/test/integration/runTest.js",
+    "l10n": "node scripts/l10n-sync.mjs",
+    "package": "vsce package --no-dependencies",
+    "check": "npm run typecheck && npm run lint && npm test"
+  },
+  "dependencies": {
+    "diff": "^8.0.2",
+    "ignore": "^7.0.5",
+    "minimatch": "^10.0.3"
+  },
+  "devDependencies": {
+    "@types/diff": "^8.0.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^20.17.0",
+    "@types/vscode": "1.95.0",
+    "@typescript-eslint/eslint-plugin": "^8.30.0",
+    "@typescript-eslint/parser": "^8.30.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.3.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.8.1",
+    "glob": "^13.0.6",
+    "mocha": "^11.1.0",
+    "ovsx": "^1.1.1",
+    "typescript": "^5.8.0"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "changekeeper",
+          "title": "ChangeKeeper",
+          "icon": "media/view-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "changekeeper": [
+        {
+          "id": "changekeeper.changes",
+          "name": "%view.changes%",
+          "icon": "media/view-icon.svg",
+          "contextualTitle": "ChangeKeeper"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "changekeeper.changes",
+        "contents": "%welcome.noSession%",
+        "when": "!changekeeper.hasSession"
+      },
+      {
+        "view": "changekeeper.changes",
+        "contents": "%welcome.noChanges%",
+        "when": "changekeeper.hasSession && !changekeeper.hasChanges"
+      }
+    ],
+    "commands": [
+      {
+        "command": "changekeeper.startSession",
+        "title": "%cmd.startSession%",
+        "category": "ChangeKeeper",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "changekeeper.stopSession",
+        "title": "%cmd.stopSession%",
+        "category": "ChangeKeeper",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "changekeeper.refresh",
+        "title": "%cmd.refresh%",
+        "category": "ChangeKeeper",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "changekeeper.reviewAll",
+        "title": "%cmd.reviewAll%",
+        "category": "ChangeKeeper",
+        "icon": "$(diff-multiple)"
+      },
+      {
+        "command": "changekeeper.openDiff",
+        "title": "%cmd.openDiff%",
+        "category": "ChangeKeeper",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "changekeeper.acceptHunk",
+        "title": "%cmd.acceptHunk%",
+        "category": "ChangeKeeper",
+        "icon": "$(check)"
+      },
+      {
+        "command": "changekeeper.discardHunk",
+        "title": "%cmd.discardHunk%",
+        "category": "ChangeKeeper",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "changekeeper.acceptFile",
+        "title": "%cmd.acceptFile%",
+        "category": "ChangeKeeper",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "changekeeper.restoreFile",
+        "title": "%cmd.restoreFile%",
+        "category": "ChangeKeeper",
+        "icon": "$(history)"
+      },
+      {
+        "command": "changekeeper.restoreSession",
+        "title": "%cmd.restoreSession%",
+        "category": "ChangeKeeper"
+      },
+      {
+        "command": "changekeeper.undoRestore",
+        "title": "%cmd.undoRestore%",
+        "category": "ChangeKeeper"
+      },
+      {
+        "command": "changekeeper.acceptAll",
+        "title": "%cmd.acceptAll%",
+        "category": "ChangeKeeper"
+      },
+      {
+        "command": "changekeeper.showReport",
+        "title": "%cmd.showReport%",
+        "category": "ChangeKeeper",
+        "icon": "$(book)"
+      },
+      {
+        "command": "changekeeper.exportReport",
+        "title": "%cmd.exportReport%",
+        "category": "ChangeKeeper"
+      },
+      {
+        "command": "changekeeper.openFile",
+        "title": "%cmd.openFile%",
+        "category": "ChangeKeeper",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "changekeeper.purgeData",
+        "title": "%cmd.purgeData%",
+        "category": "ChangeKeeper"
+      },
+      {
+        "command": "changekeeper.acceptHunkFromGutter",
+        "title": "%cmd.acceptHunkGutter%",
+        "category": "ChangeKeeper",
+        "icon": "$(check)"
+      },
+      {
+        "command": "changekeeper.resumeBurst",
+        "title": "%cmd.resumeBurst%",
+        "category": "ChangeKeeper"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "changekeeper.openDiff",
+          "when": "false"
+        },
+        {
+          "command": "changekeeper.acceptHunk",
+          "when": "false"
+        },
+        {
+          "command": "changekeeper.discardHunk",
+          "when": "false"
+        },
+        {
+          "command": "changekeeper.acceptFile",
+          "when": "false"
+        },
+        {
+          "command": "changekeeper.restoreFile",
+          "when": "false"
+        },
+        {
+          "command": "changekeeper.openFile",
+          "when": "false"
+        },
+        {
+          "command": "changekeeper.acceptHunkFromGutter",
+          "when": "false"
+        },
+        {
+          "command": "changekeeper.resumeBurst",
+          "when": "changekeeper.burstPaused"
+        },
+        {
+          "command": "changekeeper.stopSession",
+          "when": "changekeeper.hasSession"
+        },
+        {
+          "command": "changekeeper.undoRestore",
+          "when": "changekeeper.canUndoRestore"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "changekeeper.startSession",
+          "when": "view == changekeeper.changes",
+          "group": "navigation@1"
+        },
+        {
+          "command": "changekeeper.reviewAll",
+          "when": "view == changekeeper.changes && changekeeper.hasChanges",
+          "group": "navigation@2"
+        },
+        {
+          "command": "changekeeper.showReport",
+          "when": "view == changekeeper.changes && changekeeper.hasSession",
+          "group": "navigation@3"
+        },
+        {
+          "command": "changekeeper.refresh",
+          "when": "view == changekeeper.changes",
+          "group": "navigation@4"
+        },
+        {
+          "command": "changekeeper.acceptAll",
+          "when": "view == changekeeper.changes && changekeeper.hasChanges",
+          "group": "1_session@1"
+        },
+        {
+          "command": "changekeeper.restoreSession",
+          "when": "view == changekeeper.changes && changekeeper.hasChanges",
+          "group": "1_session@2"
+        },
+        {
+          "command": "changekeeper.undoRestore",
+          "when": "view == changekeeper.changes && changekeeper.canUndoRestore",
+          "group": "1_session@3"
+        },
+        {
+          "command": "changekeeper.stopSession",
+          "when": "view == changekeeper.changes && changekeeper.hasSession",
+          "group": "2_lifecycle@1"
+        },
+        {
+          "command": "changekeeper.exportReport",
+          "when": "view == changekeeper.changes && changekeeper.hasSession",
+          "group": "3_report@1"
+        },
+        {
+          "command": "changekeeper.purgeData",
+          "when": "view == changekeeper.changes",
+          "group": "9_danger@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "changekeeper.openDiff",
+          "when": "view == changekeeper.changes && viewItem =~ /^ck\\.file/",
+          "group": "inline@1"
+        },
+        {
+          "command": "changekeeper.acceptFile",
+          "when": "view == changekeeper.changes && viewItem =~ /^ck\\.file/",
+          "group": "inline@2"
+        },
+        {
+          "command": "changekeeper.restoreFile",
+          "when": "view == changekeeper.changes && viewItem =~ /^ck\\.file/",
+          "group": "inline@3"
+        },
+        {
+          "command": "changekeeper.openFile",
+          "when": "view == changekeeper.changes && viewItem =~ /^ck\\.file/",
+          "group": "1_open@1"
+        },
+        {
+          "command": "changekeeper.openDiff",
+          "when": "view == changekeeper.changes && viewItem =~ /^ck\\.file/",
+          "group": "1_open@2"
+        },
+        {
+          "command": "changekeeper.acceptFile",
+          "when": "view == changekeeper.changes && viewItem =~ /^ck\\.file/",
+          "group": "2_review@1"
+        },
+        {
+          "command": "changekeeper.restoreFile",
+          "when": "view == changekeeper.changes && viewItem =~ /^ck\\.file/",
+          "group": "2_review@2"
+        },
+        {
+          "command": "changekeeper.acceptHunk",
+          "when": "view == changekeeper.changes && viewItem == ck.hunk.pending",
+          "group": "inline@1"
+        },
+        {
+          "command": "changekeeper.discardHunk",
+          "when": "view == changekeeper.changes && viewItem =~ /^ck\\.hunk/",
+          "group": "inline@2"
+        },
+        {
+          "command": "changekeeper.acceptHunk",
+          "when": "view == changekeeper.changes && viewItem == ck.hunk.pending",
+          "group": "1_review@1"
+        },
+        {
+          "command": "changekeeper.discardHunk",
+          "when": "view == changekeeper.changes && viewItem =~ /^ck\\.hunk/",
+          "group": "1_review@2"
+        },
+        {
+          "command": "changekeeper.openDiff",
+          "when": "view == changekeeper.changes && viewItem =~ /^ck\\.hunk/",
+          "group": "2_open@1"
+        },
+        {
+          "command": "changekeeper.stopSession",
+          "when": "view == changekeeper.changes && viewItem == ck.session",
+          "group": "1_session@2"
+        },
+        {
+          "command": "changekeeper.startSession",
+          "when": "view == changekeeper.changes && viewItem == ck.session",
+          "group": "1_session@1"
+        }
+      ],
+      "diffEditor/gutter/hunk": [
+        {
+          "command": "changekeeper.acceptHunkFromGutter",
+          "when": "diffEditorOriginalUri =~ /^ck-baseline:/",
+          "group": "primary@1"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ChangeKeeper",
+      "properties": {
+        "changekeeper.autoStart": {
+          "type": "string",
+          "enum": [
+            "git",
+            "always",
+            "off"
+          ],
+          "enumDescriptions": [
+            "%cfg.autoStart.git%",
+            "%cfg.autoStart.always%",
+            "%cfg.autoStart.off%"
+          ],
+          "default": "git",
+          "scope": "resource",
+          "markdownDescription": "%cfg.autoStart%"
+        },
+        "changekeeper.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "%cfg.exclude%"
+        },
+        "changekeeper.excludeDefaults": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "%cfg.excludeDefaults%"
+        },
+        "changekeeper.criticalGlobs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "%cfg.criticalGlobs%"
+        },
+        "changekeeper.maxFileSizeKB": {
+          "type": "number",
+          "default": 2048,
+          "minimum": 16,
+          "scope": "resource",
+          "markdownDescription": "%cfg.maxFileSizeKB%"
+        },
+        "changekeeper.burstThreshold": {
+          "type": "number",
+          "default": 500,
+          "minimum": 20,
+          "scope": "resource",
+          "markdownDescription": "%cfg.burstThreshold%"
+        },
+        "changekeeper.retentionDays": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "scope": "machine",
+          "markdownDescription": "%cfg.retentionDays%"
+        },
+        "changekeeper.retentionMaxMB": {
+          "type": "number",
+          "default": 500,
+          "minimum": 50,
+          "scope": "machine",
+          "markdownDescription": "%cfg.retentionMaxMB%"
+        },
+        "changekeeper.codeLens": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "%cfg.codeLens%"
+        },
+        "changekeeper.decorations": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "%cfg.decorations%"
+        }
+      }
+    }
+  },
+  "allowScripts": {
+    "@vscode/vsce-sign@2.0.9": true,
+    "esbuild@0.28.2": true
+  }
+}
