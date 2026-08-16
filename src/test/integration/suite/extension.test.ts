@@ -251,9 +251,13 @@ describe('ChangeKeeper end to end', function () {
     const g = await guard();
     const pro = await vscode.commands.executeCommand<any>('changekeeper._pro');
     const server = pro.hooks.server;
+    // the receiver is lazy (nothing installed yet in this fresh user-data-dir): not running until asked
+    assert.strictEqual(server.isStarted, false, 'receiver is not running for a user without hooks');
+    await pro.hooks.ensureStarted();
     await until(() => (server.isOwner ? true : undefined), 'this window owns the hook port', 30000);
     const token: string = await server.token();
     const port: number = server.currentPort;
+    assert.strictEqual(port, 47399, 'the suite uses its own port (user settings of the test profile)');
     const http = await import('http');
     const post = (body: any, tok?: string) =>
       new Promise<number>((resolve, reject) => {
@@ -279,11 +283,31 @@ describe('ChangeKeeper end to end', function () {
     // session start from an agent when a session already exists: the session gets the tag
     await post({ hook_event_name: 'SessionStart', cwd: WS, transcript_path: '/home/u/.claude/x', session_id: 's1' }, token);
     await until(() => (g.engine.session.agent === 'claude-code' ? true : undefined), 'session tagged');
-    // hooks doctor / settings editing on a scratch file (never the real ~/.claude/settings.json in tests)
+    // settings editing on a scratch object (never the real ~/.claude/settings.json in tests)
     const added = settingsEdit.addChangeKeeperHooks({}, port, token);
-    assert.strictEqual(settingsEdit.installedHooks(added.next).length, 4);
+    assert.strictEqual(settingsEdit.installedHooks(added.next).length, 3, 'SessionStart + UserPromptSubmit + PostToolUse only');
+    // project-level install (no dialog: `apply`): the file is git-excluded and marked reviewed, and revert restores it
+    const file = abs('.claude/settings.local.json');
+    assert.ok(!fs.existsSync(file));
+    const written = await pro.hooks.installer.apply('project', WS);
+    assert.strictEqual(written, file);
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.strictEqual(settingsEdit.installedHooks(parsed).length, 3);
+    assert.ok(settingsEdit.installedHooks(parsed).every((h: any) => h.token === token && h.port === port));
+    const exclude = fs.readFileSync(abs('.git/info/exclude'), 'utf8');
+    assert.ok(exclude.includes('/.claude/settings.local.json'), '.git/info/exclude lists the file we created');
+    assert.strictEqual(await pro.hooks.installer.ensureGitExcluded(WS, file), 'ignored', 'git now ignores it');
+    await pro.hooks.markOwnWrite(g, file);
+    const own = await until(() => changeOf(g, '.claude/settings.local.json'), 'our own write is a (critical) change');
+    assert.strictEqual(own.critical, true);
+    assert.strictEqual(own.fileAccepted, true, 'but it is marked reviewed: it is our own write');
     const doctor: string = await pro.hooks.installer.report([WS]);
     assert.ok(doctor.includes(String(port)), 'doctor mentions the port');
+    assert.ok(doctor.includes('SessionStart, UserPromptSubmit, PostToolUse'), 'doctor lists the project file hooks: ' + doctor);
+    assert.ok(!doctor.includes('token differs'), 'doctor is happy with the token');
+    assert.strictEqual(await pro.hooks.installer.revert('project', WS), true);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), {}, 'revert leaves an empty object (the file was ours)');
+    fs.rmSync(file, { force: true });
   });
 
   it('new session re-baselines: current state becomes the baseline; stop clears the active session', async () => {

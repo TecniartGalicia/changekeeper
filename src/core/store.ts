@@ -57,14 +57,17 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   throw last;
 }
 
-/** Atomic write: temp file in the same directory + rename. Creates the directory. */
-export async function atomicWrite(file: string, data: Buffer | string): Promise<void> {
+/**
+ * Atomic write: temp file in the same directory + rename. Creates the directory. `mode` applies to
+ * the new file (POSIX; ignored on Windows) — pass the previous file's mode to keep e.g. 0600.
+ */
+export async function atomicWrite(file: string, data: Buffer | string, opts: { mode?: number } = {}): Promise<void> {
   const dir = path.dirname(file);
   await fs.mkdir(dir, { recursive: true });
   // own suffix so watchers/rules can ignore it (HARD_EXCLUDES); counter avoids same-ms collisions
   const tmp = path.join(dir, `.${path.basename(file)}.${process.pid}.${Date.now()}.${++tmpCounter}.ck-tmp`);
   try {
-    await fs.writeFile(tmp, data);
+    await fs.writeFile(tmp, data, opts.mode !== undefined ? { mode: opts.mode } : undefined);
     await withRetry(() => fs.rename(tmp, file));
   } finally {
     await fs.rm(tmp, { force: true }).catch(() => undefined);

@@ -45,6 +45,17 @@ async function main(): Promise<void> {
   fs.rmSync(path.join(userDataDir, 'User', 'globalStorage', 'argalla.changekeeper'), { recursive: true, force: true });
   fs.rmSync(path.join(userDataDir, 'User', 'globalStorage', 'state.vscdb'), { force: true });
   fs.rmSync(path.join(userDataDir, 'User', 'globalStorage', 'state.vscdb-journal'), { force: true });
+  // a port of our own so the suite never fights a real VS Code + ChangeKeeper window on the developer's machine
+  const userSettings = path.join(userDataDir, 'User', 'settings.json');
+  fs.mkdirSync(path.dirname(userSettings), { recursive: true });
+  let settings: Record<string, unknown> = {};
+  try {
+    settings = JSON.parse(fs.readFileSync(userSettings, 'utf8'));
+  } catch {
+    /* fresh */
+  }
+  settings['changekeeper.hooks.port'] = 47399;
+  fs.writeFileSync(userSettings, JSON.stringify(settings, null, 2));
   try {
     await runTests({
       ...(vscodeExecutablePath ? { vscodeExecutablePath } : {}),

@@ -25,6 +25,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const provider = new BaselineContentProvider(manager);
   const pro = new ProFeatures(context, manager, reports);
   commands.beforeStop = (g) => pro.validations.onSessionEnd(g);
+  commands.extraPurge.push(() => pro.hooks.installer.purgeBackups());
 
   const wrap = (name: string, fn: (...args: any[]) => Promise<void> | void) => async (...args: any[]) => {
     try {

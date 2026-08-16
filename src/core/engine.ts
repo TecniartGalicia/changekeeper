@@ -183,6 +183,7 @@ export class Engine {
     const manifest: BaselineManifest = { version: 1, sessionId: id, createdAt: session.startedAt, kind, rows: [] };
     this.ignoreCache.clear();
     this.viewCache.clear();
+    this.agentTouches.clear(); // attribution is per session
     this.materialized = {};
     this.burst.reset();
     this.burstQueue = [];
@@ -254,11 +255,18 @@ export class Engine {
     this.schedulePersist();
   }
 
-  /** A hook told us which agent just edited this path (attribution for the next inspection). */
+  /**
+   * A hook told us which agent just edited this path (attribution for the next inspection, kept for
+   * the rest of the session: "an agent touched this file in this session"). A specific tag may
+   * replace the generic 'agent' one, never the other way round.
+   */
   noteAgentTouch(rel: string, agent: string): void {
-    this.agentTouches.set(pathKey(rel), agent);
-    const ch = this.session?.changes[pathKey(rel)];
-    if (ch && ch.agent !== agent) {
+    const k = pathKey(rel);
+    const prev = this.agentTouches.get(k);
+    if (prev && agent === 'agent') return;
+    this.agentTouches.set(k, agent);
+    const ch = this.session?.changes[k];
+    if (ch && ch.agent !== agent && !(ch.agent && agent === 'agent')) {
       ch.agent = agent;
       this.schedulePersist();
     }

@@ -15,6 +15,8 @@ import { FileNode, HunkNode, Node, SessionNode } from './views/tree';
 export class ReviewCommands {
   /** hook run before a session is stopped (Pro: onSessionEnd validations) */
   beforeStop: ((guard: FolderGuard) => Promise<void>) | undefined;
+  /** Extra cleanups run by "Purge data" (Pro registers the hook settings backups here). */
+  readonly extraPurge: (() => Promise<void>)[] = [];
   constructor(private readonly manager: GuardManager) {}
 
   // ---- helpers ------------------------------------------------------------------------------
@@ -332,8 +334,9 @@ export class ReviewCommands {
 
   async purgeData(): Promise<void> {
     const yes = l10n.t('Purge');
-    const pick = await vscode.window.showWarningMessage(l10n.t('ChangeKeeper: delete ALL stored sessions and baselines of the open folders? Running sessions are stopped. This cannot be undone.'), { modal: true }, yes);
+    const pick = await vscode.window.showWarningMessage(l10n.t('ChangeKeeper: delete ALL stored sessions and baselines of the open folders (and the backups of Claude Code settings files edited by ChangeKeeper)? Running sessions are stopped. This cannot be undone.'), { modal: true }, yes);
     if (pick !== yes) return;
+    for (const extra of this.extraPurge) await extra().catch(() => undefined);
     let skipped = 0;
     for (const g of this.manager.all()) {
       if (!(await g.mayTouchStore())) {

@@ -249,6 +249,7 @@ export class FolderGuard implements vscode.Disposable {
         else await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: l10n.t('ChangeKeeper: taking a baseline of {0}…', this.folder.name), cancellable: true }, run);
         ok = true;
         this.ownsLock = true;
+        this.stoppedByUser = false;
         this.lastHead = this.engine.baseline?.head;
         this.burstNoticeShown = false;
         log(`[${this.folder.name}] session ${this.engine.session!.id} started (${this.engine.baseline!.rows.length} baseline rows, ${this.engine.baseline!.skipped ?? 0} skipped)`);
@@ -259,7 +260,8 @@ export class FolderGuard implements vscode.Disposable {
         if (e instanceof EngineError && e.code === 'cancelled') {
           log(`[${this.folder.name}] baseline cancelled`);
         } else if (e instanceof EngineError && e.code === 'locked') {
-          void vscode.window.showWarningMessage(l10n.t('ChangeKeeper: this folder is already guarded by another VS Code window; this window will not track changes.'));
+          log(`[${this.folder.name}] ${e.message}`);
+          if (!opts.silent) void vscode.window.showWarningMessage(l10n.t('ChangeKeeper: this folder is already guarded by another VS Code window; this window will not track changes.'));
         } else {
           log(`[${this.folder.name}] start failed: ${String(e)}`);
           if (!opts.silent) void vscode.window.showErrorMessage(l10n.t('ChangeKeeper could not start a session: {0}', e instanceof Error ? e.message : String(e)));
@@ -277,9 +279,13 @@ export class FolderGuard implements vscode.Disposable {
     return ok;
   }
 
+  /** Set when the user stopped the session on purpose (a hook must not silently restart it). */
+  stoppedByUser = false;
+
   async stop(): Promise<void> {
     await this.engine.stop();
     this.ownsLock = false;
+    this.stoppedByUser = true;
     this.stopWatching();
     this.fireChanged();
   }
