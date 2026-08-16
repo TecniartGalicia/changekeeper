@@ -199,7 +199,13 @@ export async function polarActivate(fetchImpl: FetchLike, cfg: PolarConfig, key:
     if (r.status === 404) return { ok: false, kind: 'invalid', message: 'License key not found' };
     if (r.status === 429) return { ok: false, kind: 'busy', message: 'HTTP 429' };
     if (TRANSIENT.has(r.status)) return { ok: false, kind: 'network', message: `HTTP ${r.status}` };
-    if (r.status === 403 || r.status === 422 || r.status === 400) return { ok: false, kind: 'limit', message: detailText(r.data, `HTTP ${r.status}`) };
+    if (r.status === 403 || r.status === 422 || r.status === 400) {
+      // Observed on api.polar.sh (2026-08-16) when activating a revoked key: 403 "License key is no
+      // longer active. This license key can not be activated." — that is not an activation limit.
+      const detail = detailText(r.data, `HTTP ${r.status}`);
+      if (/no longer active|revoked|disabled/i.test(detail)) return { ok: false, kind: 'invalid', message: detail };
+      return { ok: false, kind: 'limit', message: detail };
+    }
     return { ok: false, kind: 'invalid', message: detailText(r.data, `HTTP ${r.status}`) };
   } catch (e) {
     return { ok: false, kind: 'network', message: e instanceof Error ? e.message : String(e) };

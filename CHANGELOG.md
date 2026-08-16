@@ -2,7 +2,7 @@
 
 All notable changes to ChangeKeeper are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
-## [0.2.0] - unreleased
+## [0.2.0] - 2026-08-16
 
 ### Added
 - **Pro tier** (7 €, one-time, licence key via Polar): validations after review (confirmed per command and per resolved package.json script, exact exit codes, never in Restricted Mode), local secret scanner over added lines (redacted findings in tree and report), commit message straight into the SCM input box, **agent hooks** (opt-in HTTP hooks for Claude Code — `SessionStart` + `PostToolUse` — with consent/backup/revert/doctor; project scope by default and git-excluded; per-user token; lazy local receiver, one owner window per machine; files tagged with the agent that edited them; `autoStart: whenAgentDetected`), licence commands (enter key, status, deactivate, buy). Everything Pro adds can be removed without a licence; the user-level hooks are also removed on uninstall (`vscode:uninstall`).

@@ -72,6 +72,9 @@ describe('licence state machine', () => {
     assert.deepStrictEqual(await polarActivate(fake(404, { detail: 'nope' }), cfg, 'KEY', 'pc', {}), { ok: false, kind: 'invalid', message: 'License key not found' });
     const lim = await polarActivate(fake(403, { detail: [{ msg: 'License key activation limit already reached' }] }), cfg, 'KEY', 'pc', {});
     assert.ok(!lim.ok && lim.kind === 'limit' && /limit already reached/.test(lim.message), JSON.stringify(lim));
+    // a revoked key also answers 403, but it is not an activation limit (seen live on 2026-08-16)
+    const rev = await polarActivate(fake(403, { detail: 'License key is no longer active. This license key can not be activated.' }), cfg, 'KEY', 'pc', {});
+    assert.ok(!rev.ok && rev.kind === 'invalid' && /no longer active/.test(rev.message), JSON.stringify(rev));
     assert.strictEqual((await polarActivate(fake(429, {}), cfg, 'KEY', 'pc', {}, { retryBusy: false }) as any).kind, 'busy');
     assert.strictEqual((await polarActivate(fake(503, {}), cfg, 'KEY', 'pc', {}, { retryBusy: false }) as any).kind, 'network');
     assert.strictEqual((await polarActivate(fake(200, { weird: true }), cfg, 'KEY', 'pc', {}) as any).kind, 'unexpected');

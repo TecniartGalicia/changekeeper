@@ -194,7 +194,9 @@ export async function activateLicenseCommand(context: vscode.ExtensionContext): 
   if (!r.ok) {
     const why =
       r.kind === 'invalid'
-        ? l10n.t('The key was not recognised.')
+        ? r.message && /no longer active|revoked|disabled/i.test(r.message)
+          ? l10n.t('This key is no longer active (revoked or disabled): {0}', r.message)
+          : l10n.t('The key was not recognised.')
         : r.kind === 'limit'
           ? l10n.t('This key has reached its activation limit or is not active: {0}. Deactivate it on another computer or contact support.', r.message)
           : r.kind === 'busy'

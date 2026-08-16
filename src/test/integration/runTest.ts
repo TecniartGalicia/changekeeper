@@ -62,8 +62,11 @@ async function main(): Promise<void> {
       extensionDevelopmentPath,
       extensionTestsPath,
       launchArgs: [workspace, `--user-data-dir=${userDataDir}`, '--disable-extensions', '--disable-workspace-trust'],
-      // CK_PRO_DEV unlocks the Pro tier without network (never set it in a user's environment)
-      extensionTestsEnv: { CK_IT_WORKSPACE: workspace, CK_IT_TMP: tmp, CK_PRO_DEV: '1' },
+      // CK_PRO_DEV unlocks the Pro tier without network (never set it in a user's environment).
+      // With CK_LIVE_KEY the dev unlock is off on purpose: that run exercises the real Polar flow.
+      extensionTestsEnv: process.env.CK_LIVE_KEY
+        ? { CK_IT_WORKSPACE: workspace, CK_IT_TMP: tmp, CK_LIVE_KEY: process.env.CK_LIVE_KEY }
+        : { CK_IT_WORKSPACE: workspace, CK_IT_TMP: tmp, CK_PRO_DEV: '1' },
     });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

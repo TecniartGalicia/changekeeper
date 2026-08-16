@@ -277,3 +277,23 @@ Revisor independiente sobre `2266adf`, en modo lectura: contraste de cada afirma
 Verificado OK por el revisor: `npm run check` en verde (91 tests) y `.vsix` de 17 ficheros sin `src/`, `docs/`, `scripts/` ni `node_modules`; la guarda de Polar de `release.yml` bloquea de verdad la publicación con la configuración vacía, valida que el tag esté en `main` y coincida con `package.json`, y fija todas las actions por SHA; `grep -rni telemetry src` vacío y la única URL fuera del código de licencia es `127.0.0.1`; las cifras del README coinciden con el código (7 €, 14 días de gracia, revalidación cada 24 h, lo que se envía a Polar, retención 30 días/500 MB); los hooks son solo Claude Code y la afirmación sobre Copilot ya estaba retirada; icono 256×256; endpoints de métricas vivos; enlaces del documento resuelven; límites de X (≤280), LinkedIn (1.498/3.000) y Product Hunt (251/260) correctos.
 
 **Añadido tras la auditoría** (no era un hallazgo del revisor, apareció al ejecutar el CI de este mismo commit): los tests dejaban el proceso de mocha vivo tras terminar (91 verdes en 12 s, pero sin salir) porque un `dispose()` que llegaba mientras el receptor de hooks aún estaba arrancando no cancelaba los temporizadores que ese arranque creaba después. El CI se quedó colgado hasta el `timeout-minutes` del job. Arreglado en el propio receptor (`start()` publica su promesa, cada paso comprueba que sigue vivo y `stop()` la espera) — con lo que el fallo real que el cuelgue destapaba, una fuga de temporizadores y de puerto en producción al cerrar una ventana en pleno arranque, queda cerrado también.
+
+## Prueba real de compra y licencia (P2) — 2026-08-16
+
+Antes de publicar la 0.2.0 se ejecutó de principio a fin el camino que hará un cliente, contra la organización real de Polar y con una clave real (compra a 0 € con un cupón de un solo uso).
+
+| Paso | Resultado |
+|---|---|
+| Producto y precio por API (`/v1/products/…`) | `ChangeKeeper Pro`, no recurrente, **700 EUR** fijos, benefit `license_keys` con `prefix: CKP`, `expires: null`, `activations {limit: 3, enable_customer_admin: true}`, uso ilimitado |
+| Checkout | El enlace abre «Argalla · ChangeKeeper Pro · €7» (5,79 + 1,21 de IVA incluido) y admite códigos de descuento |
+| Activar (`/activate`) | `granted`, con id de activación y sin caducidad |
+| Validar con la activación | `granted` → decisión **pro: validated** |
+| Decisión sin red (caché) | **pro: validated** sin tocar la red, como está diseñado |
+| Validar con un id de activación desconocido | Segundo intento solo con la clave → `activationGone` → la extensión reactiva este equipo en vez de dejar al cliente fuera |
+| Desactivar (`/deactivate`) | Libera la plaza; validar después da `activation-removed` y Pro se apaga |
+| **Dentro de VS Code** (test `licence.live.test.ts`, se salta sin `CK_LIVE_KEY`) | «Enter licence key» activa y guarda en SecretStorage → el escáner Pro queda instalado en los guards → «Licence status» informa *active* con sus detalles → «Deactivate» lo apaga y retira el escáner |
+| Clave **revocada** en Polar | Validar → «License key is no longer active.» → decisión **pro: false, reason: revoked** |
+
+**Fallo encontrado en la prueba y corregido:** activar una clave revocada devuelve HTTP 403 con «License key is no longer active…», que el código clasificaba como `limit` (límite de activaciones). El mensaje al usuario mezclaba ambos casos; ahora ese detalle se reconoce como clave inactiva y se informa como «esta clave ya no está activa (revocada o desactivada)». Con test unitario que fija la respuesta real observada.
+
+Nota de método: una ráfaga de llamadas seguidas a Polar puede devolver un error transitorio (429); el código lo trata como «temporal» (mantiene la gracia offline) en vez de bloquear al cliente, que es el comportamiento seguro. Repetida la misma llamada aislada, el resultado es el definitivo que se esperaba.

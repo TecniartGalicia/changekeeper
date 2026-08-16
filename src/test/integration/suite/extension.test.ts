@@ -211,7 +211,8 @@ describe('ChangeKeeper end to end', function () {
     await until(() => (changeOf(g, 'lib/one.ts') || changeOf(g, 'moved/one.ts') ? undefined : true), 'ghosts cleared after moving back');
   });
 
-  it('Pro (dev unlock): secret scanner flags added credentials; a validation runs through the Task API and lands in the report', async () => {
+  // needs the dev unlock; a CK_LIVE_KEY run drives the real licence instead (licence.live.test.ts)
+  (process.env.CK_PRO_DEV ? it : it.skip)('Pro (dev unlock): secret scanner flags added credentials; a validation runs through the Task API and lands in the report', async () => {
     const g = await guard();
     const pro = await vscode.commands.executeCommand<any>('changekeeper._pro');
     await pro.refreshScanner();
