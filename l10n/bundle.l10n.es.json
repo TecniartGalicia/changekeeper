@@ -177,7 +177,6 @@
   "Run and remember": "Ejecutar y recordar",
   "Run once": "Ejecutar una vez",
   "Resolved script: {0}": "Script resuelto: {0}",
-  "ChangeKeeper will run \"{0}\" in {1}. A validation executes code from this repository — code an agent may have edited. Review critical files first.": "ChangeKeeper va a ejecutar «{0}» en {1}. Una validación ejecuta código de este repositorio — código que un agente puede haber editado. Revisa antes los ficheros críticos.",
   "Validations": "Validaciones",
   "ChangeKeeper: validations run commands from the repository and are disabled in Restricted Mode. Trust the workspace first.": "ChangeKeeper: las validaciones ejecutan comandos del repositorio y están desactivadas en modo restringido. Confía primero en el espacio de trabajo.",
   "Add a validation…": "Añadir una validación…",
@@ -219,5 +218,10 @@
   "unreadable": "ilegible",
   "no ChangeKeeper hooks": "sin hooks de ChangeKeeper",
   "port differs from the current setting — reinstall": "el puerto difiere del ajuste actual — reinstala",
-  "allowedHttpHookUrls exists but does not include our URL — reinstall": "existe allowedHttpHookUrls pero no incluye nuestra URL — reinstala"
+  "allowedHttpHookUrls exists but does not include our URL — reinstall": "existe allowedHttpHookUrls pero no incluye nuestra URL — reinstala",
+  "Working directory: {0}": "Directorio de trabajo: {0}",
+  "Runs: {0}": "Se ejecuta: {0}",
+  "ChangeKeeper will run \"{0}\" in {1}. A validation executes code from this repository — code an agent may have edited (scripts, node_modules, .npmrc…). Review critical files first.": "ChangeKeeper va a ejecutar «{0}» en {1}. Una validación ejecuta código de este repositorio — código que un agente puede haber editado (scripts, node_modules, .npmrc…). Revisa antes los ficheros críticos.",
+  "ChangeKeeper: validation \"{0}\" ignored — its cwd points outside the workspace folder.": "ChangeKeeper: validación «{0}» ignorada — su cwd apunta fuera de la carpeta del espacio de trabajo.",
+  "ChangeKeeper: validation \"{0}\" is set to run automatically but needs one manual run first (to confirm the command).": "ChangeKeeper: la validación «{0}» está configurada para ejecutarse sola pero necesita una primera ejecución manual (para confirmar el comando)."
 }

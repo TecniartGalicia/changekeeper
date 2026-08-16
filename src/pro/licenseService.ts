@@ -41,6 +41,14 @@ function devUnlocked(): boolean {
 /** Session cache + in-flight de-duplication: a burst of commands causes at most one validation. */
 let cached: { at: number; decision: ProDecision } | undefined;
 let inflight: Promise<ProDecision> | undefined;
+/** Fires when the Pro yes/no answer flips (activation, revocation, grace expiry…) so features can react live. */
+export const onDidChangeProStatus = new vscode.EventEmitter<ProDecision>();
+let lastPro: boolean | undefined;
+function remember(decision: ProDecision): void {
+  cached = { at: Date.now(), decision };
+  if (lastPro !== undefined && lastPro !== decision.pro) onDidChangeProStatus.fire(decision);
+  lastPro = decision.pro;
+}
 
 export function invalidateProCache(): void {
   cached = undefined;
@@ -65,12 +73,12 @@ export async function proStatus(context: vscode.ExtensionContext, force = false)
           log(`Licence validation: ${result.ok ? result.status : result.kind} → ${decision.pro ? 'pro (' + decision.source + ')' : decision.reason}`);
         }
       }
-      cached = { at: Date.now(), decision };
+      remember(decision);
       return decision;
     } catch (e) {
       log(`Licence check failed: ${String(e)}`);
       const decision: ProDecision = { pro: false, reason: 'network' };
-      cached = { at: Date.now(), decision };
+      remember(decision);
       return decision;
     } finally {
       inflight = undefined;

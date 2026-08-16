@@ -4,7 +4,8 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { l10n } from 'vscode';
 import { workspaceKey } from '../core/paths';
-import { approvalFingerprint, detectPresets, normaliseRules, NormalisedRule, packageScriptOf } from '../core/rules/validations';
+import { approvalFingerprint, detectPresets, normaliseRules, NormalisedRule, packageScriptOf, resolvedScripts, safeCwd } from '../core/rules/validations';
+import { redact, scanSecrets } from '../core/rules/secrets';
 import { ValidationRun } from '../core/session';
 import { log } from './env';
 import { FolderGuard } from './folderGuard';
@@ -34,16 +35,32 @@ export class ValidationRunner implements vscode.Disposable {
     return normaliseRules(cfg.get('validations', []));
   }
 
+  /** The package.json scripts the command will run (script + pre/post hooks), or undefined for plain commands. */
   private async resolvedScript(guard: FolderGuard, rule: NormalisedRule): Promise<string | undefined> {
     const script = packageScriptOf(rule.command);
     if (!script) return undefined;
+    const cwd = this.cwdOf(guard, rule);
+    if (!cwd) return '<cwd outside the workspace folder>';
     try {
-      const pkg = JSON.parse(await fs.readFile(path.join(guard.folder.uri.fsPath, ...(rule.cwd ? rule.cwd.split('/') : []), 'package.json'), 'utf8'));
-      const body = pkg?.scripts?.[script];
-      return typeof body === 'string' ? body : `<missing script ${script}>`;
+      const pkg = JSON.parse(await fs.readFile(path.join(cwd, 'package.json'), 'utf8'));
+      return resolvedScripts(pkg?.scripts, script);
     } catch {
       return `<no package.json>`;
     }
+  }
+
+  /** Absolute working directory of a rule, or undefined when `cwd` escapes the folder. */
+  private cwdOf(guard: FolderGuard, rule: NormalisedRule): string | undefined {
+    const folder = guard.folder.uri.fsPath;
+    return safeCwd(folder, rule.cwd, (...p) => path.join(...p), (base, p) => {
+      const rel = path.relative(base, p);
+      return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+    });
+  }
+
+  /** Critical files with unreviewed hunks: automatic triggers must wait for the human. */
+  private criticalPending(guard: FolderGuard): boolean {
+    return guard.engine.changes().some((ch) => ch.critical && !ch.fileAccepted && (Object.keys(ch.hunks).length === 0 || Object.values(ch.hunks).some((s) => s === 'pending')));
   }
 
   private approvedList(): string[] {
@@ -68,10 +85,11 @@ export class ValidationRunner implements vscode.Disposable {
     if (silent) return false; // auto-runs never ask; they wait for a manual first run
     const run = l10n.t('Run and remember');
     const once = l10n.t('Run once');
-    const detail = script !== undefined ? l10n.t('Resolved script: {0}', script) : '';
+    const details = [l10n.t('Working directory: {0}', this.cwdOf(guard, rule) ?? '?'), l10n.t('Runs: {0}', rule.runOn)];
+    if (script !== undefined) details.push(l10n.t('Resolved script: {0}', script));
     const pick = await vscode.window.showWarningMessage(
-      l10n.t('ChangeKeeper will run "{0}" in {1}. A validation executes code from this repository — code an agent may have edited. Review critical files first.', rule.command, guard.folder.name) + (detail ? '\n' + detail : ''),
-      { modal: true, detail },
+      l10n.t('ChangeKeeper will run "{0}" in {1}. A validation executes code from this repository — code an agent may have edited (scripts, node_modules, .npmrc…). Review critical files first.', rule.command, guard.folder.name),
+      { modal: true, detail: details.join('\n') },
       run,
       once,
     );
@@ -116,14 +134,30 @@ export class ValidationRunner implements vscode.Disposable {
   }
 
   async runRule(guard: FolderGuard, rule: NormalisedRule, trigger: ValidationRun['trigger'], silent: boolean): Promise<void> {
-    if (!(await this.confirm(guard, rule, silent))) return;
+    // single gate for every path (manual, afterReview, onSessionEnd, tests)
+    if (!vscode.workspace.isTrusted) {
+      if (!silent) void vscode.window.showWarningMessage(l10n.t('ChangeKeeper: validations run commands from the repository and are disabled in Restricted Mode. Trust the workspace first.'));
+      return;
+    }
+    const cwd = this.cwdOf(guard, rule);
+    if (!cwd) {
+      void vscode.window.showWarningMessage(l10n.t('ChangeKeeper: validation "{0}" ignored — its cwd points outside the workspace folder.', rule.name));
+      return;
+    }
+    if (silent && this.criticalPending(guard)) {
+      log(`validation "${rule.name}" (${trigger}) skipped: critical files with unreviewed changes`);
+      return;
+    }
+    if (!(await this.confirm(guard, rule, silent))) {
+      if (silent) this.hintFirstManualRun(rule);
+      return;
+    }
     const session = guard.engine.session;
     if (!session) return;
     const run: ValidationRun = { name: rule.name, command: rule.command, startedAt: new Date().toISOString(), status: 'running', trigger };
     session.validations = [...(session.validations ?? []), run].slice(-50);
     guard.engine.touch();
     const id = `ck-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const cwd = rule.cwd ? path.join(guard.folder.uri.fsPath, ...rule.cwd.split('/')) : guard.folder.uri.fsPath;
     // CustomExecution + our own child process: exit codes are exact on every shell (a bare ShellExecution under
     // PowerShell reports 0 for a failing `node -e "process.exit(3)"`), the output shows in the task terminal
     // and its tail is kept for the report.
@@ -132,6 +166,7 @@ export class ValidationRunner implements vscode.Disposable {
     const execution = new vscode.CustomExecution(async () => new CommandPty(rule.command, cwd, tailLines));
     const task = new vscode.Task({ type: 'changekeeper', id, command: rule.command }, guard.folder, `${rule.name}`, 'ChangeKeeper', execution);
     task.presentationOptions = { reveal: vscode.TaskRevealKind.Silent, panel: vscode.TaskPanelKind.Dedicated, clear: true, showReuseMessage: false };
+    const terminalName = `${rule.name}`;
     const t0 = Date.now();
     let done: (r: { exitCode?: number; status: ValidationRun['status'] }) => void = () => undefined;
     const finished = new Promise<{ exitCode?: number; status: ValidationRun['status'] }>((resolve) => (done = resolve));
@@ -169,7 +204,20 @@ export class ValidationRunner implements vscode.Disposable {
     const show = l10n.t('Show output');
     // never await a notification: the caller (auto-run, tests, session stop) must not hang on the user's click
     const notify = r.status === 'passed' ? vscode.window.showInformationMessage : vscode.window.showWarningMessage;
-    void notify(l10n.t('ChangeKeeper: validation "{0}" {1} in {2} s', rule.name, label, Math.round(run.durationMs / 1000)), show).then((p) => (p === show ? vscode.commands.executeCommand('workbench.action.tasks.showTasks') : undefined));
+    void notify(l10n.t('ChangeKeeper: validation "{0}" {1} in {2} s', rule.name, label, Math.round(run.durationMs / 1000)), show).then((p) => {
+      if (p !== show) return;
+      // the task terminal stays open (Dedicated panel); "showTasks" would only list running tasks
+      const term = vscode.window.terminals.find((t) => t.name.includes(terminalName));
+      if (term) term.show();
+      else void vscode.workspace.openTextDocument({ content: (run.outputTail ?? []).join('\n'), language: 'plaintext' }).then((d) => vscode.window.showTextDocument(d, { preview: true }));
+    });
+  }
+
+  private hinted = new Set<string>();
+  private hintFirstManualRun(rule: NormalisedRule): void {
+    if (this.hinted.has(rule.name)) return;
+    this.hinted.add(rule.name);
+    void vscode.window.showInformationMessage(l10n.t('ChangeKeeper: validation "{0}" is set to run automatically but needs one manual run first (to confirm the command).', rule.name));
   }
 
   /** afterReview: when every hunk of a session is reviewed and there are changes; once per state. */
@@ -182,11 +230,10 @@ export class ValidationRunner implements vscode.Disposable {
       if (!rules.length) continue;
       const sig = `${guard.engine.session!.id}:${c.hunks}:${c.accepted}:${c.discarded}:${c.files}`;
       if (this.lastAutoRunKey.get(guard.folder.uri.toString()) === sig) continue;
-      this.lastAutoRunKey.set(guard.folder.uri.toString(), sig);
-      if (guard.engine.changes().some((ch) => ch.critical && !ch.fileAccepted && Object.values(ch.hunks).some((s) => s === 'pending'))) continue;
-      if (!vscode.workspace.isTrusted) continue;
+      if (this.criticalPending(guard) || !vscode.workspace.isTrusted) continue;
       const pro = await ensureProSilent(this.context);
       if (!pro) continue;
+      this.lastAutoRunKey.set(guard.folder.uri.toString(), sig);
       for (const rule of rules) await this.runRule(guard, rule, 'afterReview', true);
     }
   }
@@ -232,9 +279,10 @@ export class ValidationRunner implements vscode.Disposable {
       if (!command) return;
       name = (await vscode.window.showInputBox({ prompt: l10n.t('Name'), value: command.slice(0, 30) })) ?? command.slice(0, 30);
     }
+    // written to USER settings: workspace settings live in .vscode/settings.json (a critical, agent-editable file)
     const cfg = vscode.workspace.getConfiguration('changekeeper', guard.folder.uri);
-    const current = cfg.get<any[]>('validations', []);
-    await cfg.update('validations', [...current, { name, command, runOn: 'manual', timeoutSec: 600 }], vscode.ConfigurationTarget.WorkspaceFolder);
+    const current = cfg.inspect<any[]>('validations')?.globalValue ?? [];
+    await cfg.update('validations', [...current, { name, command, runOn: 'manual', timeoutSec: 600 }], vscode.ConfigurationTarget.Global);
     void vscode.window.showInformationMessage(l10n.t('ChangeKeeper: validation "{0}" added. Run it from the ChangeKeeper view; set runOn to "afterReview" in settings to run it automatically once every hunk is reviewed.', name ?? command ?? ''));
   }
 
@@ -276,17 +324,29 @@ class CommandPty implements vscode.Pseudoterminal {
 
   open(): void {
     this.writeEmitter.fire(`\x1b[2m$ ${this.command}\x1b[0m\r\n`);
+    const env: NodeJS.ProcessEnv = { ...process.env, CK_VALIDATION: '1' };
+    delete env.ELECTRON_RUN_AS_NODE; // inherited from the extension host; would turn Electron-based tools into plain Node
+    delete env.ELECTRON_NO_ATTACH_CONSOLE;
     try {
-      this.child = spawn(this.command, { cwd: this.cwd, shell: true, windowsHide: true, env: { ...process.env, CK_VALIDATION: '1' } });
+      // detached on POSIX so the whole process group can be signalled on timeout; stdin closed so nothing waits on it
+      this.child = spawn(this.command, { cwd: this.cwd, shell: true, windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
     } catch (e) {
       this.writeEmitter.fire(`\r\n${String(e)}\r\n`);
       this.closeEmitter.fire(127);
       return;
     }
+    let pending = '';
     const onData = (d: Buffer) => {
       const text = d.toString('utf8');
       this.writeEmitter.fire(text.replace(/\r?\n/g, '\r\n'));
-      for (const line of text.split(/\r?\n/)) if (line) this.tail.push(line.length > 400 ? line.slice(0, 400) + '…' : line);
+      // tail for the report: complete lines only, ANSI stripped, secrets redacted, bounded
+      pending += text;
+      const parts = pending.split(/\r?\n/);
+      pending = parts.pop() ?? '';
+      for (const raw of parts) {
+        const line = raw.replace(ANSI, '');
+        if (line) this.tail.push(redactLine(line.length > 400 ? line.slice(0, 400) + '…' : line));
+      }
       if (this.tail.length > 60) this.tail.splice(0, this.tail.length - 60);
     };
     this.child.stdout?.on('data', onData);
@@ -296,12 +356,52 @@ class CommandPty implements vscode.Pseudoterminal {
       this.closeEmitter.fire(127);
     });
     this.child.on('close', (code) => {
+      if (pending.trim()) this.tail.push(redactLine(pending.replace(ANSI, '').slice(0, 400)));
       this.writeEmitter.fire(`\r\n\x1b[2m[exit ${code ?? 'null'}]\x1b[0m\r\n`);
       this.closeEmitter.fire(code ?? 1);
     });
   }
 
+  /** Kills the whole tree: `shell: true` means `child` is cmd.exe/sh and the real work is its grandchild. */
   close(): void {
-    this.child?.kill();
+    const c = this.child;
+    if (!c || c.pid === undefined) return;
+    if (process.platform === 'win32') {
+      try {
+        spawn('taskkill', ['/pid', String(c.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => c.kill());
+      } catch {
+        c.kill();
+      }
+    } else {
+      try {
+        process.kill(-c.pid, 'SIGTERM');
+        setTimeout(() => {
+          try {
+            process.kill(-c.pid!, 'SIGKILL');
+          } catch {
+            /* gone */
+          }
+        }, 5000).unref();
+      } catch {
+        c.kill();
+      }
+    }
   }
+}
+
+const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+
+/** Redacts anything that looks like a secret in a line of validation output before it is stored. */
+function redactLine(line: string): string {
+  const hits = scanSecrets([{ line: 1, text: line }]);
+  if (!hits.length) return line;
+  // scanSecrets returns the redacted form; rebuild the line by masking the matched fragment(s)
+  let out = line;
+  for (const h of hits) {
+    const visible = h.redacted.split('…')[0];
+    const idx = visible ? out.indexOf(visible) : -1;
+    if (idx >= 0) out = out.slice(0, idx) + redact(out.slice(idx)) ;
+    else out = '[redacted line]';
+  }
+  return out;
 }

@@ -55,5 +55,8 @@
   "cmd.hooks.revert": "Revertir hooks de agente",
   "cmd.hooks.doctor": "Doctor de hooks de agente",
   "cfg.autoStart.whenAgentDetected": "Solo cuando un hook de agente informa del inicio de una sesión (hooks Pro)",
-  "cfg.hooks.port": "Pro. Puerto local (127.0.0.1) donde envían los hooks de agente. Cámbialo solo si choca; reinstala los hooks después."
+  "cfg.hooks.port": "Pro. Puerto local (127.0.0.1) donde envían los hooks de agente. Cámbialo solo si choca; reinstala los hooks después.",
+  "cfg.secretScan": "Pro. Escanear las líneas añadidas en busca de cadenas con pinta de secreto (heurísticas locales, hallazgos redactados). Al desactivarlo desaparecen las insignias en la siguiente inspección.",
+  "task.id": "Id interno de ejecución (lo pone ChangeKeeper)",
+  "task.command": "Comando de validación (lo pone ChangeKeeper)"
 }

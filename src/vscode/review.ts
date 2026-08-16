@@ -301,6 +301,7 @@ export class ReviewCommands {
       const yes = l10n.t('New session');
       const pick = await vscode.window.showWarningMessage(l10n.t('ChangeKeeper: start a new session for {0}? The current one is closed (its data stays available for the retention period) and a fresh baseline is taken now.', guard.folder.name), { modal: true }, yes);
       if (pick !== yes) return;
+      if (this.beforeStop) await this.beforeStop(guard).catch(() => undefined);
     }
     await guard.start();
   }

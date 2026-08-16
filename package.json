@@ -725,6 +725,12 @@
           "maximum": 65535,
           "scope": "machine",
           "markdownDescription": "%cfg.hooks.port%"
+        },
+        "changekeeper.secretScan": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "markdownDescription": "%cfg.secretScan%"
         }
       }
     },
@@ -738,11 +744,11 @@
         "properties": {
           "id": {
             "type": "string",
-            "description": "Internal run id"
+            "description": "%task.id%"
           },
           "command": {
             "type": "string",
-            "description": "Validation command"
+            "description": "%task.command%"
           }
         }
       }

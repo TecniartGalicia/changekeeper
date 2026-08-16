@@ -161,6 +161,8 @@ export class Engine {
     this.indexBaseline();
     this.materialized = await this.deps.store.readMaterialized(s.id);
     this.viewCache.clear();
+    // a validation that was running when the window closed can never report back
+    for (const v of s.validations ?? []) if (v.status === 'running') v.status = 'error';
     return true;
   }
 

@@ -43,7 +43,6 @@ export class FolderGuard implements vscode.Disposable {
   private changeTimer: ReturnType<typeof setTimeout> | undefined;
   config: FolderConfig;
   gitCtx: GitContext | undefined;
-  private gitDetected = false;
   starting: Promise<void> | undefined;
   activated = false;
   /** true while this window owns the folder's session lock (start/resume succeeded) */
@@ -137,23 +136,35 @@ export class FolderGuard implements vscode.Disposable {
   // lifecycle
   // ------------------------------------------------------------------------------------------
 
-  private async ensureGit(): Promise<void> {
-    if (this.gitDetected) return;
-    this.gitDetected = true;
-    if (this.folder.uri.scheme !== 'file') return;
-    try {
-      this.gitCtx = await detectGit(this.folder.uri);
-    } catch (e) {
-      log(`[${this.folder.name}] git detection failed: ${String(e)}`);
+  private gitDetection: Promise<void> | undefined;
+  /** Detects git once; concurrent callers (activate + a user's Start) share the same promise. */
+  private ensureGit(): Promise<void> {
+    if (!this.gitDetection) {
+      this.gitDetection = (async () => {
+        if (this.folder.uri.scheme !== 'file') return;
+        try {
+          this.gitCtx = await detectGit(this.folder.uri);
+        } catch (e) {
+          log(`[${this.folder.name}] git detection failed: ${String(e)}`);
+        }
+        this.deps.git = this.gitCtx?.runner;
+        this.deps.gitPrefix = this.gitCtx?.prefix;
+      })();
     }
-    this.deps.git = this.gitCtx?.runner;
-    this.deps.gitPrefix = this.gitCtx?.prefix;
+    return this.gitDetection;
   }
+
+  private activating: Promise<void> | undefined;
 
   /** Resumes a persisted session or auto-starts one according to the configuration. Runs in the background. */
   async activate(): Promise<void> {
-    if (this.activated) return;
+    if (this.activated) return this.activating;
     this.activated = true;
+    this.activating = this.doActivate();
+    return this.activating;
+  }
+
+  private async doActivate(): Promise<void> {
     if (this.folder.uri.scheme !== 'file') return;
     await this.ensureGit();
     let resumed = false;
@@ -189,7 +200,12 @@ export class FolderGuard implements vscode.Disposable {
     }
     const auto = this.config.autoStart === 'always' || (this.config.autoStart === 'git' && this.isGit);
     if (auto) {
-      await this.start({ silent: true });
+      this.inActivation = true;
+      try {
+        await this.startInternal({ silent: true });
+      } finally {
+        this.inActivation = false;
+      }
     } else {
       this.stopWatching();
       this.queueUntilStarted = undefined;
@@ -207,8 +223,15 @@ export class FolderGuard implements vscode.Disposable {
     return code;
   }
 
-  /** Starts (or restarts = re-baseline) a session. */
+  /** Starts (or restarts = re-baseline) a session. Waits for the background activation first (never races it). */
   async start(opts: { silent?: boolean; agent?: string; label?: string } = {}): Promise<boolean> {
+    if (this.activating && !this.inActivation) await this.activating.catch(() => undefined);
+    return this.startInternal(opts);
+  }
+
+  private inActivation = false;
+
+  private async startInternal(opts: { silent?: boolean; agent?: string; label?: string } = {}): Promise<boolean> {
     if (this.starting) await this.starting;
     let ok = false;
     this.starting = (async () => {

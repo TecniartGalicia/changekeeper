@@ -8,7 +8,7 @@ import { GuardManager } from '../vscode/guardManager';
 import { ReportCommands } from '../vscode/reportCommands';
 import { ValidationRunner } from '../vscode/validate';
 import { HooksFeature } from '../vscode/hooks';
-import { activateLicenseCommand, deactivateLicenseCommand, ensurePro, licenseStatusCommand, openCheckout, proStatus } from './licenseService';
+import { activateLicenseCommand, deactivateLicenseCommand, ensurePro, licenseStatusCommand, onDidChangeProStatus, openCheckout, proStatus } from './licenseService';
 
 /**
  * Pro tier wiring. Rule of the house: everything Pro *adds* can be removed without a licence
@@ -37,6 +37,10 @@ export class ProFeatures implements vscode.Disposable {
       vscode.commands.registerCommand('changekeeper.pro.status', () => licenseStatusCommand(context)),
       vscode.commands.registerCommand('changekeeper.pro.buy', () => openCheckout()),
       manager.onDidAddGuard((g) => this.applyTo(g)),
+      onDidChangeProStatus.event(() => void this.refreshScanner()),
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration('changekeeper.secretScan')) void this.refreshScanner();
+      }),
     );
     void this.refreshScanner();
   }
@@ -44,8 +48,9 @@ export class ProFeatures implements vscode.Disposable {
   /** The secret scanner is injected into every engine while the licence is valid; removed otherwise. */
   async refreshScanner(): Promise<void> {
     const pro = (await proStatus(this.context)).pro;
-    this.scannerOn = pro;
-    for (const g of this.manager.all()) g.setSecretScanner(pro ? scanSecrets : undefined);
+    const wanted = vscode.workspace.getConfiguration('changekeeper').get<boolean>('secretScan', true);
+    this.scannerOn = pro && wanted;
+    for (const g of this.manager.all()) g.setSecretScanner(this.scannerOn ? scanSecrets : undefined);
     void vscode.commands.executeCommand('setContext', 'changekeeper.pro', pro);
   }
 

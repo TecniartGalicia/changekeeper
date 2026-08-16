@@ -55,5 +55,8 @@
   "cmd.hooks.revert": "Revert Agent Hooks",
   "cmd.hooks.doctor": "Agent Hooks Doctor",
   "cfg.autoStart.whenAgentDetected": "Only when an agent hook reports a session start (Pro hooks)",
-  "cfg.hooks.port": "Pro. Local port (127.0.0.1) where the agent hooks post. Change it only if it clashes; reinstall the hooks afterwards."
+  "cfg.hooks.port": "Pro. Local port (127.0.0.1) where the agent hooks post. Change it only if it clashes; reinstall the hooks afterwards.",
+  "cfg.secretScan": "Pro. Scan added lines for secret-looking strings (local heuristics, redacted findings). Turning it off removes the badges on the next inspection.",
+  "task.id": "Internal run id (set by ChangeKeeper)",
+  "task.command": "Validation command (set by ChangeKeeper)"
 }

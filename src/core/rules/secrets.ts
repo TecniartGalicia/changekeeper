@@ -17,11 +17,11 @@ export const SECRET_PATTERNS: SecretPattern[] = [
   { id: 'private-key', label: 'Private key block', re: /-----BEGIN (RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY( BLOCK)?-----/ },
   { id: 'google-api-key', label: 'Google API key', re: /\bAIza[0-9A-Za-z_-]{35}\b/ },
   { id: 'stripe-key', label: 'Stripe key', re: /\b(sk|rk)_(live|test)_[0-9A-Za-z]{16,}\b/ },
-  { id: 'openai-key', label: 'OpenAI-style key', re: /\bsk-(proj-)?[A-Za-z0-9_-]{32,}\b/ },
   { id: 'anthropic-key', label: 'Anthropic key', re: /\bsk-ant-[A-Za-z0-9_-]{32,}\b/ },
+  { id: 'openai-key', label: 'OpenAI-style key', re: /\bsk-(proj-)?[A-Za-z0-9]{20,}[A-Za-z0-9_-]*\b/ },
   { id: 'jwt', label: 'JSON Web Token', re: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/ },
-  { id: 'generic-assignment', label: 'Credential assignment', re: /\b(api[_-]?key|secret|token|passwd|password|client[_-]?secret)\b\s*[:=]\s*['"][^'"\s]{12,}['"]/i },
-  { id: 'url-credentials', label: 'Credentials in URL', re: /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]{4,}@[^\s/]+/i },
+  { id: 'generic-assignment', label: 'Credential assignment', re: /\b[A-Za-z0-9_]*(api[_-]?key|secret|token|passwd|password|client[_-]?secret)\b["']?\s*[:=]\s*["']?[^"'\s]{12,}["']?/i },
+  { id: 'url-credentials', label: 'Credentials in URL', re: /(?<![a-z0-9+.-])[a-z][a-z0-9+.-]{0,30}:\/\/[^\s/:@]+:[^\s/@]{4,}@[^\s/]+/i },
 ];
 
 export interface SecretFinding {
@@ -39,7 +39,7 @@ const PLACEHOLDER = /(example|placeholder|your[_-]?|xxx|changeme|<[^>]+>|\$\{|%s
 export function scanSecrets(lines: { line: number; text: string }[]): SecretFinding[] {
   const out: SecretFinding[] = [];
   for (const { line, text } of lines) {
-    if (text.length > 4000) continue; // minified / data lines: skip
+    if (text.length > 1000) continue; // minified / data lines: skip (also bounds regex cost)
     for (const p of SECRET_PATTERNS) {
       const m = p.re.exec(text);
       if (!m) continue;

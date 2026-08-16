@@ -176,3 +176,37 @@ Revisor independiente sobre `b0f8484` (copia limpia): `npm run check`, `l10n-syn
 Verificado OK por el revisor: CodeLens (codicons, rangos, comandos con `FileNode/HunkNode`, ajuste `codeLens`), decoraciones (colores válidos, mapeo, refresh), informe y export, package.json/Marketplace (description sin frases del filtro, keywords, `pricing: Free`, `preview`, capabilities, activación, l10n/nls), APIs ≤ 1.95, `.vsix` (15 ficheros, sin restos Pro ni red), CI/release (SHAs, matriz, idempotencia), docs.
 
 **Estado tras F2+F3:** 58 unit + 8 integración en verde; `.vsix` 0.1.0 empaquetado. Siguiente: repo público, secretos, tag `v0.1.0`.
+
+## F4 · Pro (validaciones, secretos, commit→SCM, licencia Polar) — auditoría del 2026-08-16
+
+Revisor independiente sobre `5bbdce0`: copia limpia, `npm run check`/`test:integration` en verde, sonda e2e propia (cwd/timeout/env/stdin/concurrencia), lectura de `workbench.desktop.main.js` 1.133 (Task API real), diff contra el `license.ts` de referencia (idéntico byte a byte), benchmark del scanner. 25 hallazgos (8 medios, 0 altos); aplicados en el commit siguiente salvo los marcados.
+
+| # | Sev. | Hallazgo (resumen) | Resolución |
+|---|------|--------------------|------------|
+| D1 | Media | El timeout mataba solo la shell (`child.kill()`), no el árbol (`node` nieto seguía vivo) | `CommandPty.close()`: Windows `taskkill /T /F`; POSIX `detached` + `process.kill(-pid, SIGTERM)` y `SIGKILL` a los 5 s |
+| D2 | Media | El fingerprint no incluía `pre<script>`/`post<script>` | `resolvedScripts()` = script + pre + post (JSON estable) en fingerprint y en el diálogo; README matizado («reduce el riesgo…») |
+| D3 | Media | `cwd` admitía `..` (salía de la carpeta); el modal no mostraba cwd ni runOn | `safeCwd()` rechaza escapes (regla ignorada con aviso); modal con directorio, disparador y scripts en `detail` |
+| D4 | Media | `runOn` fuera del fingerprint: un agente podía pasar una regla aprobada de manual a automática | `runOn` en el fingerprint |
+| D5 | Media | `onSessionEnd` sin gate de críticos pendientes; no se disparaba en re-baseline | Gate único `criticalPending()` en `runRule` para disparos silenciosos; `beforeStop` también en «New session» |
+| D6 | Media | `outputTail` persistido/informado sin redactar | Cada línea del tail pasa por `scanSecrets`/`redact` antes de guardarse; ANSI eliminado; líneas partidas reagrupadas; PRIVACY lo dice |
+| D7 | Media | «Show output» abría `showTasks` (solo tareas activas) | Muestra el terminal de la tarea; fallback: documento con el tail |
+| D8 | Media (F1b) | Carrera `ensureGit()`/`start()` durante `activate()` → línea base plain en un repo git | Detección memoizada (promesa única) + `start()` espera la activación (sin interbloqueo: `startInternal` desde la propia activación) |
+| D9 | Baja | El scanner no se retiraba al perder la licencia en la revalidación | `onDidChangeProStatus` → `refreshScanner()`; ajuste `changekeeper.secretScan` |
+| D10 | Baja | `runOne` sin gate de trust; PLAN decía que `executeTask` lanza en Restricted Mode (no: pide confianza y no arranca) | Gate `isTrusted` único en `runRule`; nota en PLAN |
+| D11 | Baja | El hijo heredaba `ELECTRON_RUN_AS_NODE` | Eliminado del env (y `ELECTRON_NO_ATTACH_CONSOLE`) |
+| D12 | Baja | stdin abierto → comandos que leen stdin esperaban al timeout | `stdio: ['ignore', 'pipe', 'pipe']` |
+| D13 | Baja | ANSI y líneas partidas en el tail | = D6 |
+| D14 | Baja | «Resolved script» duplicado en el modal | Solo `detail` |
+| D15 | Baja | `addPreset` escribía en `.vscode/settings.json` (crítico y vigilado) | Escribe en ajustes de usuario (Global) |
+| D16 | Baja | Firma de auto-run fijada antes de comprobar gates; silencio si falta la primera ejecución manual | Firma solo al ejecutar; aviso único «needs one manual run first» |
+| D17 | Baja | Regex `url-credentials` cuadrática en líneas patológicas | Esquema acotado `{0,30}` + corte de línea a 1 000 chars; test de rendimiento |
+| D18 | Baja | Orden openai/anthropic; asignaciones sin comillas/prefijo; falso positivo `sk-` slug | Reordenado; asignación más amplia; `sk-` exige ≥20 alfanuméricos; tests |
+| D19 | Baja | `.npmrc`/`.yarnrc`/`.pnpmfile.cjs` no críticos | Añadidos a `DEFAULT_CRITICAL` |
+| D20 | Baja | `running` persistido si se cierra VS Code | Al reanudar → `error` |
+| D21 | Baja | README «turn the scanner off» sin ajuste | Ajuste `changekeeper.secretScan`; upsell ya coherente (hooks entran en 0.2.0) |
+| D22 | Baja | PRIVACY versión corta contradecía la sección Red | Corregida (EN/ES) |
+| D23 | Baja | PLAN §3.3 vs código (criticalGlobs/retención gratis) | Decisión: gratis; PLAN corregido |
+| D24 | Baja | TUS-TAREAS sin puerta 0.2.0 | Bloque «Puerta v0.2.0» añadido |
+| D25 | Baja | `taskDefinitions` sin nls | `%task.id%`/`%task.command%` |
+
+Verificado OK por el revisor: `license.ts` idéntico al de referencia y sus 9 tests; claves de almacenamiento y `CK_PRO_DEV` sin restos de Handsfree; `polarConfigured` exige org+checkout; guarda de release.yml bloquea 0.2.0 con Polar vacío; PRIVACY refleja lo enviado a Polar; exit codes exactos con `CustomExecution`; `taskDefinitions`; notificaciones no bloqueantes; `restrictedConfigurations` con `validations`; `approveRule` solo vía comando interno; «quitar es gratis» respetado; scanner sin fugas y coste típico despreciable.

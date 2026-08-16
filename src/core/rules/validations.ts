@@ -61,14 +61,31 @@ export function packageScriptOf(command: string): string | undefined {
  */
 export function approvalFingerprint(rule: NormalisedRule, resolvedScript: string | undefined, folderKey: string): string {
   const h = crypto.createHash('sha256');
-  h.update(folderKey);
-  h.update('\0');
-  h.update(rule.command);
-  h.update('\0');
-  h.update(rule.cwd ?? '');
-  h.update('\0');
-  h.update(resolvedScript ?? '');
+  // every field that changes *what* runs or *when* it runs invalidates the approval
+  h.update(JSON.stringify([folderKey, rule.command, rule.cwd ?? '', rule.runOn, resolvedScript ?? '']));
   return h.digest('hex').slice(0, 32);
+}
+
+/**
+ * The scripts npm/pnpm/yarn actually run for `<name>`: the script itself plus its `pre`/`post` hooks.
+ * Returned as a stable JSON string (used in the fingerprint and shown in the confirmation dialog).
+ */
+export function resolvedScripts(scripts: Record<string, unknown> | undefined, name: string): string {
+  const s = scripts ?? {};
+  const pick = (k: string) => (typeof s[k] === 'string' ? (s[k] as string) : undefined);
+  const out: Record<string, string> = {};
+  for (const k of [`pre${name}`, name, `post${name}`]) {
+    const v = pick(k);
+    if (v !== undefined) out[k] = v;
+  }
+  return out[name] === undefined ? `<missing script ${name}>` : JSON.stringify(out);
+}
+
+/** A rule's working directory must stay inside the workspace folder ("../" escapes are refused). */
+export function safeCwd(folder: string, cwd: string | undefined, join: (...p: string[]) => string, isInside: (base: string, p: string) => boolean): string | undefined {
+  if (!cwd) return folder;
+  const resolved = join(folder, ...cwd.split('/').filter(Boolean));
+  return isInside(folder, resolved) ? resolved : undefined;
 }
 
 export interface Preset {

@@ -1,12 +1,12 @@
 # Privacy
 
-**Short version:** ChangeKeeper works entirely on your machine. It sends nothing anywhere, has no telemetry, no account and no network access.
+**Short version:** ChangeKeeper works entirely on your machine. It sends nothing anywhere, has no telemetry and no account; the only network access is the optional Pro licence check (see Network).
 
 ## What it stores, and where
 - Session state (which files changed, hunk review status, restore records) and **baseline copies** of files that changed during a session (plus copies of anything a restore overwrote), under VS Code's global storage for the extension: `…/User/globalStorage/argalla.changekeeper/workspaces/<hash of the folder path>/`. On Windows that is inside `%APPDATA%\Code\User\globalStorage\` (or the equivalent for VSCodium/Cursor).
 - In git repositories, files that were clean at session start are **not** copied: only their git object id is recorded, and the content is read from git when needed.
 - Nothing of ChangeKeeper's own is written inside your repository or workspace folder. The only workspace files it writes are the ones you explicitly discard or restore (atomically, through a temporary `.<name>.<pid>.<n>.ck-tmp` next to the file, removed immediately).
-- The session report you can export contains file paths and, for non-critical files, the first changed line of each hunk (for critical files such as `.env*`, keys or CI only the line ranges). Nothing is exported unless you ask.
+- The session report you can export contains file paths and, for non-critical files, the first changed line of each hunk (for critical files such as `.env*`, keys or CI only the line ranges); with Pro it also contains the last lines of output of failed validations (secret-looking strings redacted) and redacted secret findings. Nothing is exported unless you ask.
 
 Baseline copies can contain whatever your files contain — including secrets — exactly as they already exist on your disk. They are not encrypted (they live on the same disk with the same permissions as your workspace).
 
