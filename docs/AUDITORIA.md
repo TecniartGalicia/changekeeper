@@ -76,3 +76,73 @@ No verificado por P: registro de marca de los candidatos en EUIPO/USPTO/OEPM; do
 - Handsfree tiene `scripts/metrics.mjs`, `docs/METRICAS.md`, `docs/DIFUSION.md`, `docs/PLAN-SEGUIMIENTO.md` → reutilizables (§9).
 
 **Estado tras la Auditoría 0:** PLAN.md v2 escrito; sin código aún. Siguiente puerta: decisión de nombre (A1) → F1a.
+
+## F1a · Motor (`src/core`) — auditoría del 2026-08-16
+
+Revisor independiente sobre el commit `166639f`: lectura completa, `npm test`, **fuzz de 135.587 casos** sobre `computeHunks/discardHunkOnLines` (limpio) y scripts contra git 2.55 real. 27 hallazgos; todos aplicados en `7f3db21` salvo los marcados.
+
+| # | Sev. | Hallazgo (resumen) | Resolución |
+|---|------|--------------------|------------|
+| A1 | Alta | Ficheros no UTF-8 se corrompían al descartar (decodificación con pérdida + reescritura completa) | `decodeText` con `TextDecoder(fatal)`; si falla, latin1 (biyectivo) y `encoding` recordado; `planDiscard` recodifica igual; docs abiertos se hashean con la codificación del disco. Test A1 (bytes idénticos) |
+| A2 | Alta | Críticos ignorados **preexistentes** (`.env`) sin línea base → «Restore» los borraba | `status --ignored=matching`; entradas `!` críticas se copian al store; en plain, `skipDir` solo salta hard/heavy. Test A2 (M con hunks, restore intacto) |
+| A3 | Alta | `cat-file --batch --filters` con ruta relativa a la carpeta: atributos por ruta mal resueltos en subcarpetas | Ruta = `gitPrefix + rel`. Test A3 (`.gitattributes` `sub/*.txt eol=crlf`) |
+| A4 | Media | Re-baseline perdía el lock | `stop({ keepLock })` antes de crear la sesión; test A4 |
+| A5 | Media | `fileAccepted` aceptaba en silencio ediciones posteriores | Se anula al cambiar el sha; los hunks aceptados conservan su estado por id; test A5 |
+| A6 | Media | `reconcile` ignoraba filas `store/missing/uncertain/unavailable` | Todas las filas no git-blob son candidatas; test A6 |
+| A7 | Media | Submódulos: OIDs de otro ODB → «blob-missing» y ficheros dentro como «nuevos» | Se detectan gitlinks; sus ficheros quedan `unavailable:submodule` (honesto); test A7. Materializar con `git -C <sub>` queda en backlog |
+| A8 | Media | Ventana de copia sin detección de contenido | Re-stat (size/mtime) tras el 2.º status → `uncertain`; test A8 |
+| A9 | Media | Materialización sin tope de tamaño | `cat-file --batch-check` antes; `> maxFileBytes` → `unavailable:large`; test A9 |
+| A10 | Media | Renombrado dependía del orden A/D y duplicaba la D en contadores | Detección simétrica (la D convierte la A en R; la fuente que reaparece deshace la R); la D pareja no se cuenta; test A10 |
+| A11 | Media | Temporales de `atomicWrite` visibles para el watcher | Sufijo `.ck-tmp` + `HARD_EXCLUDES` + filtro en `enqueueUri` |
+| A12 | Media | Un spawn de `check-ignore` por ruta | `prefetchIgnore()` en lote (reconcile, burst, drain de la UI) |
+| A13 | Media | `computeHunks` síncrono hasta 3 s | Timeout por defecto 500 ms (el fallback round-tripa: fuzz) |
+| A14 | Media | Cambios solo EOL/BOM → «M» sin nada que revisar | `eolOnly` en el cambio; árbol/tooltip/informe lo dicen; test A14 |
+| A15 | Media | Críticos dentro de `node_modules`/`.venv`… | Nivel «heavy» no anulable por críticos (`HEAVY_EXCLUDES`); test |
+| A16 | Media | `gc()` pisaba `index.json` concurrente con start/stop | `withIndex()` serializado; gc relee el índice, nunca borra la activa ni blobs de sesiones nuevas |
+| A17 | Baja | `reconcile` sin comprobar códigos de git | Comprobados (lanza `EngineError`) |
+| A18 | Baja | Colisión de nombre tmp en el mismo ms | Contador monótono |
+| A19 | Baja | Symlinks / modo 755 | `120000` → `unavailable:symlink`; `writeFile(mode)` hace chmod en POSIX |
+| A20 | Baja | Reutilización de PID en el lock | **Pendiente** (backlog): hostname/startTime + «Take over» |
+| A21 | Baja | `applyDiscardToDisk` sin reverificar sha | Reverifica y devuelve `stale`; test A21 |
+| A22 | Baja | Negativos de `materialize` no cacheados | Cache `!reason` en `materialized`; test A9/A22 |
+| A23 | Baja | Doc abierto limpio con fichero borrado en disco → no se veía la D | `readCurrent` trata disco ausente + doc limpio como borrado; test A23 |
+| A24 | Baja | JSON corrupto bloqueaba la activación | `readJson` aparta `.corrupt` y sigue |
+| A25 | Baja | Paso a D sin archivar estados | `reconcileHunks(ch, [])` |
+| A26 | Baja | Hash de ficheros grandes por lectura completa | **Pendiente** (backlog): hash por streaming |
+| A27 | Baja | Undo parcial reofrecía el mismo registro | `undonePaths` por ruta |
+
+Verificado OK por el revisor: modelo de hunks (fuzz), rangos de `planDiscard` para docs abiertos, BOM, parsers git, `gitPrefix` en ls-files/check-ignore/check-attr/status, materialización por OID (sobrevive a commit/reset/gc), `uncertain`, serialización por ruta, restore/undo, store/lock/GC, `NodeGit.run`, reglas, `paths`.
+
+## F1b · Capa VS Code — auditoría del 2026-08-16
+
+Revisor independiente sobre `166639f` (copia limpia): `npm run check`, `test:integration` 7/7 en VS Code 1.133, sondas propias en un VS Code real y verificación contra la fuente de VS Code. 23 hallazgos; aplicados en `7f3db21` salvo los marcados.
+
+| # | Sev. | Hallazgo (resumen) | Resolución |
+|---|------|--------------------|------------|
+| B1 | Alta | `menus.diffEditor/gutter/hunk` es **API propuesta** (`contribDiffEditorGutterToolBarMenus`): en producción la entrada no existe | Contribución retirada; comandos **Accept/Discard hunk at cursor** en `editor/title` (diff con `ck-baseline:`) y `editor/context`; el argumento con `mapping` sigue entendiéndose si algún día se publica. PLAN §4.4 y T7 corregidos |
+| B2 | Alta | = A1 (no UTF-8) también desde la UI | Motor: round-trip latin1; UI: verificación de sha antes de aplicar en documento |
+| B3 | Alta | Renombrado/movimiento de **directorio** por CLI: hijos invisibles y «D» fantasma | `drain` expande directorios: creado → walk de hijos; ausente → `knownPathsUnder`; test de integración con `renameSync` de un directorio |
+| B4 | Media | Activación esperaba a la API git (hasta 4 s) | Detección de git perezosa dentro de `activate()` (background); `activated in N ms` ya no la incluye |
+| B5 | Media | Aviso de primera vez incondicional y antes de terminar | Se muestra tras activar y con texto distinto si no hay sesión |
+| B6 | Media | Config de workspace sin `inspect()`: un agente podía cegar la siguiente sesión | Claves sensibles de workspace solo tras **aprobación** (hash en `workspaceState`); hasta entonces valores de usuario; aviso con «Apply / Keep»; `restrictedConfigurations` ampliado |
+| B7 | Media | `purgeData`/GC desde una ventana sin lock destruían la sesión de otra | `mayTouchStore()` (lock propio o sin dueño vivo) antes de purgar/GC |
+| B8 | Media | `hasChanges` sobre sesiones detenidas | Solo guards con sesión; `when` de acciones exige `hasSession` |
+| B9 | Media | Watcher `.git` recursivo sobre la raíz del repo; `.git` fichero; `lastHead` tras resume | Patrón sin `/` sobre `--absolute-git-dir` (`{HEAD,ORIG_HEAD,MERGE_HEAD,REBASE_HEAD,index}`); `refreshHead()` tras resume |
+| B10 | Media | 50 procesos git en paralelo en ráfagas | Lotes de 8 + `prefetchIgnore` por lote |
+| B11 | Baja | Tooltip sin escapar (`__init__.py`) | `appendText` para rutas |
+| B12 | Baja | `Range(0,0,lineCount,0)` | `validateRange` |
+| B13 | Baja | Selección en línea de contexto; R con lado izquierdo vacío | `hunkMeta.firstLine`; R usa la línea base de `renamedFrom` |
+| B14 | Baja | Sin `TreeItem.id` | id `folder|path` |
+| B15 | Baja | Aviso de ráfaga repetido en cada lote | Se mantiene hasta resolver |
+| B16 | Baja | Stubs de informe visibles | F2 implementado (informe, export, commit message) |
+| B17 | Baja | Salidas silenciosas de stop/undo | `pickGuard(filter)` + mensajes |
+| B18 | Baja | Cambios de config sin aviso | Aviso con «New session»; descripciones «Applies to the next session» |
+| B19 | Baja | Doble activación / timers | `activated`; timers limpiados |
+| B20 | Baja | Reutilización de PID | **Pendiente** (= A20) |
+| B21 | Baja | `includes` O(n²) | `Map` |
+| B22 | Baja | Mensajes de progreso del motor sin l10n | Códigos → `l10n.t` en la capa VS Code |
+| B23 | Baja | Espera de 10 s en el test; `globalStorage` de runs anteriores | Espera eliminada; limpieza por run |
+
+Verificado OK por el revisor: contratos `vscode.changes`/`vscode.diff`/`<viewId>.focus`/context keys/ThemeColors/codicons; activación y colas; watchers y carrera doc-recarga (curada por `onDidChangeTextDocument`); escrituras propias sin cambios fantasma; discard por WorkspaceEdit (normal y EOF); HEAD watcher; package.json/nls/l10n; content provider.
+
+**Estado tras F1a+F1b:** `npm run check` (56 unit) e integración 8/8 en VS Code 1.133 (Windows). Commit `7f3db21`.
