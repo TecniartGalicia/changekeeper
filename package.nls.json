@@ -1,5 +1,5 @@
 {
-  "cap.untrusted": "In Restricted Mode ChangeKeeper still tracks and restores changes, but exclusion and critical-file rules from workspace settings are ignored (only user settings apply).",
+  "cap.untrusted": "In Restricted Mode ChangeKeeper still tracks and restores changes, but exclusion/critical rules and validations from workspace settings are ignored (only user settings apply) and validations never run.",
   "cap.virtual": "ChangeKeeper needs a real file system to take baselines and watch changes.",
   "view.changes": "Changes",
   "welcome.noSession": "No guarded session in this workspace.\n[Start guarding](command:changekeeper.startSession)\n\nChangeKeeper takes a baseline of the folder and shows every change made afterwards — by an AI coding agent, a script or you — so you can review it hunk by hunk and roll it back.",
@@ -36,5 +36,19 @@
   "cfg.decorations": "Highlight changed lines in the editor.",
   "cmd.acceptHunkAtCursor": "Accept Hunk at Cursor",
   "cmd.discardHunkAtCursor": "Discard Hunk at Cursor",
-  "cmd.copyCommitMessage": "Copy Suggested Commit Message"
+  "cmd.copyCommitMessage": "Copy Suggested Commit Message",
+  "cmd.validate": "Run Validations (Pro)",
+  "cmd.validateOne": "Run One Validation… (Pro)",
+  "cmd.addValidation": "Add a Validation… (Pro)",
+  "cmd.commitMessageToScm": "Put Commit Message into the SCM Box (Pro)",
+  "cmd.pro.activate": "Enter Licence Key",
+  "cmd.pro.deactivate": "Deactivate Licence on This Computer",
+  "cmd.pro.status": "Licence Status",
+  "cmd.pro.buy": "Get ChangeKeeper Pro",
+  "cfg.validations": "Pro. Commands to run after a review (lint, tests, build…). Each command is confirmed the first time it runs in a workspace, and again whenever the command or the package.json script it points to changes. `runOn`: `manual`, `afterReview` (once every hunk is reviewed and no critical file is pending) or `onSessionEnd`.",
+  "cfg.validations.name": "Display name",
+  "cfg.validations.command": "Shell command, run in the workspace folder (or `cwd`)",
+  "cfg.validations.cwd": "Sub-folder to run in (relative)",
+  "cfg.validations.runOn": "When it runs",
+  "cfg.validations.timeoutSec": "Kill after this many seconds (default 600)"
 }

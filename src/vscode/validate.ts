@@ -1,3 +1,4 @@
+import { spawn } from 'child_process';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -47,6 +48,11 @@ export class ValidationRunner implements vscode.Disposable {
 
   private approvedList(): string[] {
     return this.context.workspaceState.get<string[]>(APPROVED_KEY) ?? [];
+  }
+
+  /** Test hook: pre-approves a rule (what the confirmation dialog would do). */
+  async approveRule(guard: FolderGuard, rule: NormalisedRule): Promise<void> {
+    await this.approve(approvalFingerprint(rule, await this.resolvedScript(guard, rule), workspaceKey(guard.folder.uri.fsPath)));
   }
 
   private async approve(fp: string): Promise<void> {
@@ -109,7 +115,7 @@ export class ValidationRunner implements vscode.Disposable {
     if (pick) await this.runRule(guard, pick.r, 'manual', false);
   }
 
-  private async runRule(guard: FolderGuard, rule: NormalisedRule, trigger: ValidationRun['trigger'], silent: boolean): Promise<void> {
+  async runRule(guard: FolderGuard, rule: NormalisedRule, trigger: ValidationRun['trigger'], silent: boolean): Promise<void> {
     if (!(await this.confirm(guard, rule, silent))) return;
     const session = guard.engine.session;
     if (!session) return;
@@ -118,7 +124,13 @@ export class ValidationRunner implements vscode.Disposable {
     guard.engine.touch();
     const id = `ck-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const cwd = rule.cwd ? path.join(guard.folder.uri.fsPath, ...rule.cwd.split('/')) : guard.folder.uri.fsPath;
-    const task = new vscode.Task({ type: 'changekeeper', id, command: rule.command }, guard.folder, `${rule.name}`, 'ChangeKeeper', new vscode.ShellExecution(rule.command, { cwd }));
+    // CustomExecution + our own child process: exit codes are exact on every shell (a bare ShellExecution under
+    // PowerShell reports 0 for a failing `node -e "process.exit(3)"`), the output shows in the task terminal
+    // and its tail is kept for the report.
+    const tailLines: string[] = [];
+    run.outputTail = tailLines;
+    const execution = new vscode.CustomExecution(async () => new CommandPty(rule.command, cwd, tailLines));
+    const task = new vscode.Task({ type: 'changekeeper', id, command: rule.command }, guard.folder, `${rule.name}`, 'ChangeKeeper', execution);
     task.presentationOptions = { reveal: vscode.TaskRevealKind.Silent, panel: vscode.TaskPanelKind.Dedicated, clear: true, showReuseMessage: false };
     const t0 = Date.now();
     let done: (r: { exitCode?: number; status: ValidationRun['status'] }) => void = () => undefined;
@@ -130,13 +142,13 @@ export class ValidationRunner implements vscode.Disposable {
         done({ exitCode: e.exitCode, status: e.exitCode === 0 ? 'passed' : e.exitCode === undefined ? 'error' : 'failed' });
       }
     });
-    let execution: vscode.TaskExecution | undefined;
+    let taskExecution: vscode.TaskExecution | undefined;
     const timer = setTimeout(() => {
-      execution?.terminate();
+      taskExecution?.terminate();
       done({ status: 'timeout' });
     }, rule.timeoutSec * 1000);
     try {
-      execution = await vscode.tasks.executeTask(task);
+      taskExecution = await vscode.tasks.executeTask(task);
     } catch (e) {
       clearTimeout(timer);
       sub.dispose();
@@ -155,8 +167,9 @@ export class ValidationRunner implements vscode.Disposable {
     guard.engine.touch();
     const label = r.status === 'passed' ? l10n.t('passed') : r.status === 'failed' ? l10n.t('failed (exit {0})', String(r.exitCode)) : r.status === 'timeout' ? l10n.t('timed out') : l10n.t('error');
     const show = l10n.t('Show output');
-    const p = await (r.status === 'passed' ? vscode.window.showInformationMessage : vscode.window.showWarningMessage)(l10n.t('ChangeKeeper: validation "{0}" {1} in {2} s', rule.name, label, Math.round(run.durationMs / 1000)), show);
-    if (p === show) await vscode.commands.executeCommand('workbench.action.tasks.showTasks');
+    // never await a notification: the caller (auto-run, tests, session stop) must not hang on the user's click
+    const notify = r.status === 'passed' ? vscode.window.showInformationMessage : vscode.window.showWarningMessage;
+    void notify(l10n.t('ChangeKeeper: validation "{0}" {1} in {2} s', rule.name, label, Math.round(run.durationMs / 1000)), show).then((p) => (p === show ? vscode.commands.executeCommand('workbench.action.tasks.showTasks') : undefined));
   }
 
   /** afterReview: when every hunk of a session is reviewed and there are changes; once per state. */
@@ -230,7 +243,14 @@ export class ValidationRunner implements vscode.Disposable {
     const runs = guard.engine.session?.validations ?? [];
     if (!runs.length) return [];
     const lines = ['## Validations', ''];
-    for (const r of runs) lines.push(`- ${r.status === 'passed' ? '[x]' : '[ ]'} **${r.name}** \`${r.command}\` — ${r.status}${r.exitCode !== undefined ? ` (exit ${r.exitCode})` : ''}${r.durationMs ? ` · ${Math.round(r.durationMs / 1000)} s` : ''} · ${r.trigger} · ${r.startedAt}`);
+    for (const r of runs) {
+      lines.push(`- ${r.status === 'passed' ? '[x]' : '[ ]'} **${r.name}** \`${r.command}\` — ${r.status}${r.exitCode !== undefined ? ` (exit ${r.exitCode})` : ''}${r.durationMs ? ` · ${Math.round(r.durationMs / 1000)} s` : ''} · ${r.trigger} · ${r.startedAt}`);
+      if (r.status !== 'passed' && r.outputTail?.length) {
+        lines.push('  ```');
+        for (const l of r.outputTail.slice(-15)) lines.push('  ' + l);
+        lines.push('  ```');
+      }
+    }
     return [lines.join('\n')];
   }
 
@@ -242,4 +262,46 @@ export class ValidationRunner implements vscode.Disposable {
 /** Pro check without any UI (for automatic triggers). */
 async function ensureProSilent(context: vscode.ExtensionContext): Promise<boolean> {
   return (await proStatus(context)).pro;
+}
+
+/** Pseudoterminal that runs one shell command, streams its output and ends with the real exit code. */
+class CommandPty implements vscode.Pseudoterminal {
+  private readonly writeEmitter = new vscode.EventEmitter<string>();
+  private readonly closeEmitter = new vscode.EventEmitter<number>();
+  readonly onDidWrite = this.writeEmitter.event;
+  readonly onDidClose = this.closeEmitter.event;
+  private child: ReturnType<typeof spawn> | undefined;
+
+  constructor(private readonly command: string, private readonly cwd: string, private readonly tail: string[]) {}
+
+  open(): void {
+    this.writeEmitter.fire(`\x1b[2m$ ${this.command}\x1b[0m\r\n`);
+    try {
+      this.child = spawn(this.command, { cwd: this.cwd, shell: true, windowsHide: true, env: { ...process.env, CK_VALIDATION: '1' } });
+    } catch (e) {
+      this.writeEmitter.fire(`\r\n${String(e)}\r\n`);
+      this.closeEmitter.fire(127);
+      return;
+    }
+    const onData = (d: Buffer) => {
+      const text = d.toString('utf8');
+      this.writeEmitter.fire(text.replace(/\r?\n/g, '\r\n'));
+      for (const line of text.split(/\r?\n/)) if (line) this.tail.push(line.length > 400 ? line.slice(0, 400) + '…' : line);
+      if (this.tail.length > 60) this.tail.splice(0, this.tail.length - 60);
+    };
+    this.child.stdout?.on('data', onData);
+    this.child.stderr?.on('data', onData);
+    this.child.on('error', (e) => {
+      this.writeEmitter.fire(`\r\n${String(e)}\r\n`);
+      this.closeEmitter.fire(127);
+    });
+    this.child.on('close', (code) => {
+      this.writeEmitter.fire(`\r\n\x1b[2m[exit ${code ?? 'null'}]\x1b[0m\r\n`);
+      this.closeEmitter.fire(code ?? 1);
+    });
+  }
+
+  close(): void {
+    this.child?.kill();
+  }
 }

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { l10n } from 'vscode';
 import { BASELINE_SCHEME, EMPTY_SCHEME, log, output } from './vscode/env';
 import { GuardManager } from './vscode/guardManager';
+import { ProFeatures } from './pro/features';
 import { ReportCommands } from './vscode/reportCommands';
 import { ReviewCommands } from './vscode/review';
 import { HunkCodeLensProvider, HunkDecorations } from './vscode/views/codelens';
@@ -22,6 +23,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const commands = new ReviewCommands(manager);
   const reports = new ReportCommands(manager);
   const provider = new BaselineContentProvider(manager);
+  const pro = new ProFeatures(context, manager, reports);
+  commands.beforeStop = (g) => pro.validations.onSessionEnd(g);
 
   const wrap = (name: string, fn: (...args: any[]) => Promise<void> | void) => async (...args: any[]) => {
     try {
@@ -36,6 +39,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     output(),
     manager,
+    pro,
     new StatusBar(manager),
     new HunkDecorations(manager),
     vscode.window.createTreeView('changekeeper.changes', { treeDataProvider: tree, showCollapseAll: true }),
@@ -65,6 +69,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // internal, for tests
     vscode.commands.registerCommand('changekeeper._manager', () => manager),
     vscode.commands.registerCommand('changekeeper._reports', () => reports),
+    vscode.commands.registerCommand('changekeeper._pro', () => pro),
   );
 
   await manager.initialize();

@@ -59,6 +59,20 @@ Baselines and session state live in the extension's global storage on this machi
 | `changekeeper.burstThreshold` | `500` | New files in 5 s that trigger the burst guard. |
 | `changekeeper.retentionDays` / `retentionMaxMB` | `30` / `500` | Retention of closed sessions. |
 | `changekeeper.codeLens` / `decorations` | `true` | Inline review actions and highlights in the editor. |
+| `changekeeper.validations` | `[]` | **Pro.** Commands to run after a review (`name`, `command`, `cwd`, `runOn`: `manual` / `afterReview` / `onSessionEnd`, `timeoutSec`). |
+
+## Pro
+
+The core above is free forever and stays free: sessions, hunk review, restore/undo, critical files, the report and its export. **ChangeKeeper Pro** (7 €, one-time payment per person, licence key through [Polar](https://polar.sh)) adds the automation around it:
+
+| Pro feature | What it does |
+| :-- | :-- |
+| **Validations** | Run `npm test`, `tsc`, `pytest`, `cargo check`… (presets detected from your project, or any command) manually, automatically once every hunk is reviewed (`afterReview`) or when the session ends. Each command is confirmed the first time in a workspace and again if the command *or the package.json script it points to* changes — an agent cannot make ChangeKeeper run something you did not approve. Results (exit code, duration, output tail) go into the report. Never runs in Restricted Mode. |
+| **Secret scanner** | Added lines are checked locally for token shapes (AWS, GitHub, Slack, Stripe, private keys, JWTs, `password = "…"`, credentials in URLs). Findings are redacted, flagged in the tree and listed in the report. No network. |
+| **Commit message into the SCM box** | The suggested message goes straight into the git input box (the report's export is free). |
+| **Agent attribution through hooks** *(coming in 0.3.0)* | Opt-in hooks for Claude Code (and Copilot/Codex/Cursor when their hook shapes are verified) tag which agent touched what and start sessions when an agent starts. |
+
+Everything Pro adds can be removed without a licence: delete a validation from settings, turn the scanner off, revert hooks — the free features never depend on it. Activate with **ChangeKeeper Pro: Enter Licence Key**; the key is validated once and re-checked every 24 h with a 14-day offline grace period. Sent to Polar: the key, this computer's name, your OS and the extension version — nothing else, ever. Buy: **ChangeKeeper Pro: Get ChangeKeeper Pro**.
 
 ## Requirements
 
@@ -66,7 +80,7 @@ VS Code 1.95 or newer (or a compatible host). `git` on your PATH (or configured 
 
 ## Privacy & security
 
-Everything happens on your machine. No telemetry, no network calls, no account. Details in [PRIVACY.md](PRIVACY.md); vulnerabilities via [SECURITY.md](SECURITY.md).
+Everything happens on your machine. No telemetry, no account, and no network calls except Pro licence activation and its 24-hourly re-validation, only on machines where you entered a key. Details in [PRIVACY.md](PRIVACY.md); vulnerabilities via [SECURITY.md](SECURITY.md).
 
 ## Contributing & licence
 

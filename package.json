@@ -1,8 +1,8 @@
 {
   "name": "changekeeper",
   "displayName": "ChangeKeeper",
-  "description": "Keep, review hunk by hunk and roll back every change your AI coding agent makes — including edits made from the shell. Works with Claude Code, Codex, Copilot, Cursor and more. Local-first, no telemetry. Not affiliated with any agent vendor.",
-  "version": "0.1.0",
+  "description": "Keep, review hunk by hunk, validate and roll back every change your AI coding agent makes — including edits made from the shell. Works with Claude Code, Codex, Copilot, Cursor and more. Local-first, no telemetry. Not affiliated with any agent vendor.",
+  "version": "0.2.0",
   "publisher": "argalla",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -29,7 +29,7 @@
     "snapshot",
     "guardrail"
   ],
-  "pricing": "Free",
+  "pricing": "Trial",
   "preview": true,
   "repository": {
     "type": "git",
@@ -57,7 +57,8 @@
         "changekeeper.criticalGlobs",
         "changekeeper.autoStart",
         "changekeeper.maxFileSizeKB",
-        "changekeeper.burstThreshold"
+        "changekeeper.burstThreshold",
+        "changekeeper.validations"
       ]
     },
     "virtualWorkspaces": {
@@ -249,6 +250,48 @@
         "title": "%cmd.copyCommitMessage%",
         "category": "ChangeKeeper",
         "icon": "$(git-commit)"
+      },
+      {
+        "command": "changekeeper.validate",
+        "title": "%cmd.validate%",
+        "category": "ChangeKeeper",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "changekeeper.validateOne",
+        "title": "%cmd.validateOne%",
+        "category": "ChangeKeeper"
+      },
+      {
+        "command": "changekeeper.addValidation",
+        "title": "%cmd.addValidation%",
+        "category": "ChangeKeeper"
+      },
+      {
+        "command": "changekeeper.commitMessageToScm",
+        "title": "%cmd.commitMessageToScm%",
+        "category": "ChangeKeeper",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "changekeeper.pro.activate",
+        "title": "%cmd.pro.activate%",
+        "category": "ChangeKeeper Pro"
+      },
+      {
+        "command": "changekeeper.pro.deactivate",
+        "title": "%cmd.pro.deactivate%",
+        "category": "ChangeKeeper Pro"
+      },
+      {
+        "command": "changekeeper.pro.status",
+        "title": "%cmd.pro.status%",
+        "category": "ChangeKeeper Pro"
+      },
+      {
+        "command": "changekeeper.pro.buy",
+        "title": "%cmd.pro.buy%",
+        "category": "ChangeKeeper Pro"
       }
     ],
     "menus": {
@@ -320,6 +363,18 @@
         {
           "command": "changekeeper.reviewAll",
           "when": "changekeeper.hasChanges"
+        },
+        {
+          "command": "changekeeper.validate",
+          "when": "changekeeper.hasSession"
+        },
+        {
+          "command": "changekeeper.validateOne",
+          "when": "changekeeper.hasSession"
+        },
+        {
+          "command": "changekeeper.commitMessageToScm",
+          "when": "changekeeper.hasReport"
         }
       ],
       "view/title": [
@@ -336,12 +391,12 @@
         {
           "command": "changekeeper.showReport",
           "when": "view == changekeeper.changes && changekeeper.hasReport",
-          "group": "navigation@3"
+          "group": "navigation@4"
         },
         {
           "command": "changekeeper.refresh",
           "when": "view == changekeeper.changes",
-          "group": "navigation@4"
+          "group": "navigation@5"
         },
         {
           "command": "changekeeper.acceptAll",
@@ -377,6 +432,26 @@
           "command": "changekeeper.copyCommitMessage",
           "when": "view == changekeeper.changes && changekeeper.hasReport",
           "group": "3_report@2"
+        },
+        {
+          "command": "changekeeper.validate",
+          "when": "view == changekeeper.changes && changekeeper.hasSession",
+          "group": "navigation@3"
+        },
+        {
+          "command": "changekeeper.commitMessageToScm",
+          "when": "view == changekeeper.changes && changekeeper.hasReport",
+          "group": "3_report@3"
+        },
+        {
+          "command": "changekeeper.addValidation",
+          "when": "view == changekeeper.changes",
+          "group": "4_pro@1"
+        },
+        {
+          "command": "changekeeper.pro.status",
+          "when": "view == changekeeper.changes",
+          "group": "4_pro@2"
         }
       ],
       "view/item/context": [
@@ -573,9 +648,69 @@
           "default": true,
           "scope": "resource",
           "markdownDescription": "%cfg.decorations%"
+        },
+        "changekeeper.validations": {
+          "type": "array",
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "%cfg.validations%",
+          "items": {
+            "type": "object",
+            "required": [
+              "command"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "%cfg.validations.name%"
+              },
+              "command": {
+                "type": "string",
+                "description": "%cfg.validations.command%"
+              },
+              "cwd": {
+                "type": "string",
+                "description": "%cfg.validations.cwd%"
+              },
+              "runOn": {
+                "type": "string",
+                "enum": [
+                  "manual",
+                  "afterReview",
+                  "onSessionEnd"
+                ],
+                "default": "manual",
+                "description": "%cfg.validations.runOn%"
+              },
+              "timeoutSec": {
+                "type": "number",
+                "default": 600,
+                "description": "%cfg.validations.timeoutSec%"
+              }
+            }
+          }
         }
       }
-    }
+    },
+    "taskDefinitions": [
+      {
+        "type": "changekeeper",
+        "required": [
+          "id",
+          "command"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Internal run id"
+          },
+          "command": {
+            "type": "string",
+            "description": "Validation command"
+          }
+        }
+      }
+    ]
   },
   "allowScripts": {
     "@vscode/vsce-sign@2.0.9": true,

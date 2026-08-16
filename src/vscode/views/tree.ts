@@ -117,9 +117,10 @@ export class ChangesTree implements vscode.TreeDataProvider<Node> {
     if (c.baselineUnavailable) parts.push(l10n.t('no baseline'));
     if (c.baselineUncertain) parts.push(l10n.t('baseline uncertain'));
     if (c.eolOnly) parts.push(l10n.t('line endings only'));
+    if (c.secrets?.length) parts.push(l10n.t('{0} possible secret(s)', c.secrets.length));
     item.description = parts.join(' · ');
     const [icon, color] = KIND_ICON[c.kind];
-    item.iconPath = c.critical && !reviewed ? new vscode.ThemeIcon('warning', new vscode.ThemeColor('list.warningForeground')) : new vscode.ThemeIcon(icon, new vscode.ThemeColor(color));
+    item.iconPath = c.secrets?.length && !reviewed ? new vscode.ThemeIcon('key', new vscode.ThemeColor('list.errorForeground')) : c.critical && !reviewed ? new vscode.ThemeIcon('warning', new vscode.ThemeColor('list.warningForeground')) : new vscode.ThemeIcon(icon, new vscode.ThemeColor(color));
     item.resourceUri = n.uri;
     item.contextValue = `ck.file${c.critical ? '.critical' : ''}${reviewed ? '.reviewed' : ''}`;
     item.command = { command: 'changekeeper.openDiff', title: l10n.t('Open diff'), arguments: [n] };
@@ -133,6 +134,13 @@ export class ChangesTree implements vscode.TreeDataProvider<Node> {
     md.appendMarkdown('  \n');
     if (c.critical) md.appendMarkdown(`$(warning) ${l10n.t('Critical file: review carefully')}  \n`);
     if (c.eolOnly) md.appendMarkdown(`${l10n.t('Only line endings, BOM or encoding differ from the baseline (no line changed).')}  \n`);
+    if (c.secrets?.length) {
+      md.appendMarkdown(`$(key) ${l10n.t('Possible secrets in added lines (Pro, heuristic):')}  \n`);
+      for (const sec of c.secrets.slice(0, 5)) {
+        md.appendText(`  · line ${sec.line}: ${sec.label} — ${sec.redacted}`);
+        md.appendMarkdown('  \n');
+      }
+    }
     if (hunkIds.length) md.appendMarkdown(`${l10n.t('Hunks')}: ${hunkIds.length} (${l10n.t('{0} pending', pending)})  \n`);
     if (c.baselineUnavailable) md.appendMarkdown(`${l10n.t('Baseline unavailable')}: ${c.baselineUnavailable}  \n`);
     if (c.baselineUncertain) md.appendMarkdown(`${l10n.t('The file changed while the baseline was being taken; the baseline may not be the pre-agent content.')}  \n`);

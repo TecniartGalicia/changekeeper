@@ -19,6 +19,6 @@ Baseline copies can contain whatever your files contain — including secrets �
 - No configuration files of any agent are read or written in this version.
 
 ## Network
-None. Future optional Pro features would use the network only for licence validation, and would say so here first.
+None in the free features. **Pro licence:** when you enter a licence key, ChangeKeeper calls Polar (`api.polar.sh`) to activate it and again at most once every 24 hours to re-validate it (14-day offline grace). Sent: the key, this computer's name, your operating system and the extension version — never any file, path or setting. Machines where no key was entered make no network calls at all.
 
 Questions: info@tecniartgalicia.com

@@ -9,6 +9,8 @@ export class GuardManager implements vscode.Disposable {
   private guards = new Map<string, FolderGuard>(); // folder uri string → guard
   private readonly _onDidChange = new vscode.EventEmitter<void>();
   readonly onDidChange = this._onDidChange.event;
+  private readonly _onDidAddGuard = new vscode.EventEmitter<FolderGuard>();
+  readonly onDidAddGuard = this._onDidAddGuard.event;
   private disposables: vscode.Disposable[] = [];
   private gcTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly approvals: Approvals;
@@ -59,6 +61,7 @@ export class GuardManager implements vscode.Disposable {
       const g = new FolderGuard(f, this.context.globalStorageUri, this.approvals);
       this.guards.set(f.uri.toString(), g);
       g.onDidChange(() => this.fire(), null, this.disposables);
+      this._onDidAddGuard.fire(g);
       if (activate) await g.activate();
     } catch (e) {
       log(`[${f.name}] could not create guard: ${String(e)}`);

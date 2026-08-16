@@ -32,6 +32,7 @@ export class ProFeatures implements vscode.Disposable {
       vscode.commands.registerCommand('changekeeper.pro.deactivate', () => deactivateLicenseCommand(context).then(() => this.refreshScanner())),
       vscode.commands.registerCommand('changekeeper.pro.status', () => licenseStatusCommand(context)),
       vscode.commands.registerCommand('changekeeper.pro.buy', () => openCheckout()),
+      manager.onDidAddGuard((g) => this.applyTo(g)),
     );
     void this.refreshScanner();
   }

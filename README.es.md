@@ -59,6 +59,20 @@ Las líneas base y el estado de sesión viven en el almacenamiento global de la 
 | `changekeeper.burstThreshold` | `500` | Ficheros nuevos en 5 s que disparan la guardia de ráfagas. |
 | `changekeeper.retentionDays` / `retentionMaxMB` | `30` / `500` | Retención de sesiones cerradas. |
 | `changekeeper.codeLens` / `decorations` | `true` | Acciones y resaltados en el editor. |
+| `changekeeper.validations` | `[]` | **Pro.** Comandos a ejecutar tras la revisión (`name`, `command`, `cwd`, `runOn`: `manual` / `afterReview` / `onSessionEnd`, `timeoutSec`). |
+
+## Pro
+
+El núcleo de arriba es gratis para siempre y lo seguirá siendo: sesiones, revisión por bloques, restaurar/deshacer, ficheros críticos, el informe y su exportación. **ChangeKeeper Pro** (7 €, pago único por persona, clave de licencia mediante [Polar](https://polar.sh)) añade la automatización alrededor:
+
+| Función Pro | Qué hace |
+| :-- | :-- |
+| **Validaciones** | Ejecuta `npm test`, `tsc`, `pytest`, `cargo check`… (presets detectados de tu proyecto, o cualquier comando) a mano, automáticamente cuando todos los bloques estén revisados (`afterReview`) o al terminar la sesión. Cada comando se confirma la primera vez en un espacio de trabajo y de nuevo si cambia el comando *o el script de package.json al que apunta*: un agente no puede hacer que ChangeKeeper ejecute algo que no aprobaste. Los resultados (código de salida, duración, cola de la salida) van al informe. Nunca se ejecuta en modo restringido. |
+| **Escáner de secretos** | Las líneas añadidas se comprueban en local contra formas de token (AWS, GitHub, Slack, Stripe, claves privadas, JWT, `password = "…"`, credenciales en URL). Los hallazgos van redactados, marcados en el árbol y listados en el informe. Sin red. |
+| **Mensaje de commit en la caja de SCM** | El mensaje sugerido va directo a la caja de git (exportar el informe es gratis). |
+| **Atribución por agente mediante hooks** *(llega en 0.3.0)* | Hooks opcionales para Claude Code (y Copilot/Codex/Cursor cuando se verifiquen sus formatos) que etiquetan qué agente tocó qué e inician sesiones cuando arranca un agente. |
+
+Todo lo que añade Pro se puede quitar sin licencia: borrar una validación de los ajustes, apagar el escáner, revertir los hooks — las funciones gratuitas nunca dependen de ello. Actívalo con **ChangeKeeper Pro: Introducir clave de licencia**; la clave se valida una vez y se recomprueba cada 24 h con 14 días de gracia sin conexión. A Polar se envía: la clave, el nombre de este equipo, tu SO y la versión de la extensión — nada más, nunca. Comprar: **ChangeKeeper Pro: Conseguir ChangeKeeper Pro**.
 
 ## Requisitos
 
@@ -66,7 +80,7 @@ VS Code 1.95 o superior (o un host compatible). `git` en el PATH (o configurado 
 
 ## Privacidad y seguridad
 
-Todo ocurre en tu máquina. Sin telemetría, sin llamadas de red, sin cuenta. Detalles en [PRIVACY.es.md](PRIVACY.es.md); vulnerabilidades por [SECURITY.md](SECURITY.md).
+Todo ocurre en tu máquina. Sin telemetría, sin cuenta y sin llamadas de red salvo la activación de la licencia Pro y su revalidación cada 24 h, solo en equipos donde hayas introducido una clave. Detalles en [PRIVACY.es.md](PRIVACY.es.md); vulnerabilidades por [SECURITY.md](SECURITY.md).
 
 ## Contribuir y licencia
 

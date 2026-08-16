@@ -1,5 +1,5 @@
 {
-  "cap.untrusted": "En modo restringido ChangeKeeper sigue registrando y restaurando cambios, pero ignora las reglas de exclusión y de ficheros críticos de la configuración del espacio de trabajo (solo aplican los ajustes de usuario).",
+  "cap.untrusted": "En modo restringido ChangeKeeper sigue registrando y restaurando cambios, pero ignora las reglas de exclusión/críticos y las validaciones de la configuración del espacio de trabajo (solo aplican los ajustes de usuario) y las validaciones nunca se ejecutan.",
   "cap.virtual": "ChangeKeeper necesita un sistema de ficheros real para tomar líneas base y vigilar cambios.",
   "view.changes": "Cambios",
   "welcome.noSession": "No hay ninguna sesión vigilada en este espacio de trabajo.\n[Empezar a vigilar](command:changekeeper.startSession)\n\nChangeKeeper toma una línea base de la carpeta y muestra todo lo que cambia después — por un agente de IA, un script o tú — para revisarlo bloque a bloque y deshacerlo.",
@@ -36,5 +36,19 @@
   "cfg.decorations": "Resaltar las líneas cambiadas en el editor.",
   "cmd.acceptHunkAtCursor": "Aceptar bloque bajo el cursor",
   "cmd.discardHunkAtCursor": "Descartar bloque bajo el cursor",
-  "cmd.copyCommitMessage": "Copiar mensaje de commit sugerido"
+  "cmd.copyCommitMessage": "Copiar mensaje de commit sugerido",
+  "cmd.validate": "Ejecutar validaciones (Pro)",
+  "cmd.validateOne": "Ejecutar una validación… (Pro)",
+  "cmd.addValidation": "Añadir una validación… (Pro)",
+  "cmd.commitMessageToScm": "Poner el mensaje de commit en la caja de SCM (Pro)",
+  "cmd.pro.activate": "Introducir clave de licencia",
+  "cmd.pro.deactivate": "Desactivar la licencia en este equipo",
+  "cmd.pro.status": "Estado de la licencia",
+  "cmd.pro.buy": "Conseguir ChangeKeeper Pro",
+  "cfg.validations": "Pro. Comandos a ejecutar tras una revisión (lint, tests, build…). Cada comando se confirma la primera vez que se ejecuta en un espacio de trabajo y de nuevo si cambia el comando o el script de package.json al que apunta. `runOn`: `manual`, `afterReview` (cuando todos los bloques están revisados y ningún fichero crítico queda pendiente) o `onSessionEnd`.",
+  "cfg.validations.name": "Nombre visible",
+  "cfg.validations.command": "Comando de shell, ejecutado en la carpeta del espacio de trabajo (o `cwd`)",
+  "cfg.validations.cwd": "Subcarpeta donde ejecutarlo (relativa)",
+  "cfg.validations.runOn": "Cuándo se ejecuta",
+  "cfg.validations.timeoutSec": "Matar pasados estos segundos (600 por defecto)"
 }

@@ -121,6 +121,8 @@ export interface ValidationRun {
   exitCode?: number;
   status: 'running' | 'passed' | 'failed' | 'timeout' | 'error';
   trigger: 'manual' | 'afterReview' | 'onSessionEnd';
+  /** last lines of output (kept short; for the report) */
+  outputTail?: string[];
 }
 
 export interface SessionCounters {

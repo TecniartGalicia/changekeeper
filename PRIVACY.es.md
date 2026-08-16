@@ -19,6 +19,6 @@ Las copias de línea base pueden contener lo que contengan tus ficheros — secr
 - En esta versión no se lee ni se escribe ningún fichero de configuración de ningún agente.
 
 ## Red
-Ninguna. Futuras funciones Pro opcionales usarían la red solo para validar la licencia, y se diría aquí antes.
+Ninguna en las funciones gratuitas. **Licencia Pro:** al introducir una clave, ChangeKeeper llama a Polar (`api.polar.sh`) para activarla y, como mucho, una vez cada 24 horas para revalidarla (14 días de gracia sin conexión). Se envía: la clave, el nombre de este equipo, tu sistema operativo y la versión de la extensión — nunca ficheros, rutas ni ajustes. Los equipos sin clave no hacen ninguna llamada de red.
 
 Preguntas: info@tecniartgalicia.com

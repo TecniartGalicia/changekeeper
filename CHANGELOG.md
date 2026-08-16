@@ -2,6 +2,18 @@
 
 All notable changes to ChangeKeeper are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - unreleased
+
+### Added
+- **Pro tier** (7 €, one-time, licence key via Polar): validations after review (Task API, confirmed per command and per resolved package.json script, never in Restricted Mode), local secret scanner over added lines (redacted findings in tree and report), commit message straight into the SCM input box, licence commands (enter key, status, deactivate, buy). Everything Pro adds can be removed without a licence.
+- Discarding a hunk on disk (closed document) now keeps the previous bytes: it can be undone with **Undo last restore**.
+- Renamed files diff against the baseline of their source; CodeLens sits on the first changed line; accept/discard at cursor work from the baseline side of the diff too.
+
+### Changed
+- The session report no longer includes the first changed line of hunks in critical files (only the ranges); hunk headers are capped at 100 characters.
+- Fewer recomputations while typing in a changed file.
+- Third-party licence notices shipped in the package.
+
 ## [0.1.0] - 2026-08-16
 
 First public preview.
@@ -22,4 +34,4 @@ First public preview.
 - English and Spanish.
 
 ### Not in this version
-- Validations (lint/tests after review), secret scanning, agent attribution through hooks and the commit message straight into the SCM box are planned for a later, optional Pro tier.
+- Validations, secret scanning, agent attribution through hooks and the commit message straight into the SCM box arrive with the optional Pro tier in 0.2.0/0.3.0.

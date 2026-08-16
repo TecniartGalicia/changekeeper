@@ -210,6 +210,42 @@ describe('ChangeKeeper end to end', function () {
     await until(() => (changeOf(g, 'lib/one.ts') || changeOf(g, 'moved/one.ts') ? undefined : true), 'ghosts cleared after moving back');
   });
 
+  it('Pro (dev unlock): secret scanner flags added credentials; a validation runs through the Task API and lands in the report', async () => {
+    const g = await guard();
+    const pro = await vscode.commands.executeCommand<any>('changekeeper._pro');
+    await pro.refreshScanner();
+    fs.writeFileSync(abs('src/config.ts'), 'export const GH = "ghp_' + 'A'.repeat(40) + '";' + String.fromCharCode(10));
+    const ch = await until(() => {
+      const c = changeOf(g, 'src/config.ts');
+      return c && c.secrets && c.secrets.length ? c : undefined;
+    }, 'secret finding on the change');
+    assert.strictEqual(ch.secrets[0].label, 'GitHub token');
+    assert.ok(!ch.secrets[0].redacted.includes('AAAAAAAAAA'), 'redacted');
+    // validation: pre-approve (what the confirmation dialog would do) and run a trivial command
+    const rule = { name: 'ok', command: 'node -e "process.exit(0)"', runOn: 'manual', timeoutSec: 60 };
+    await pro.validations.approveRule(g, rule);
+    await pro.validations.runRule(g, rule, 'manual', true);
+    const run = g.engine.session.validations?.find((v: any) => v.name === 'ok');
+    assert.ok(run, 'validation recorded in the session');
+    assert.strictEqual(run.status, 'passed');
+    const failing = { name: 'ko', command: 'node -e "process.exit(3)"', runOn: 'manual', timeoutSec: 60 };
+    await pro.validations.approveRule(g, failing);
+    await pro.validations.runRule(g, failing, 'manual', true);
+    const run2 = g.engine.session.validations?.find((v: any) => v.name === 'ko');
+    assert.strictEqual(run2.status, 'failed');
+    assert.strictEqual(run2.exitCode, 3);
+    const reports = await vscode.commands.executeCommand<any>('changekeeper._reports');
+    const md: string = await reports.build(g);
+    assert.ok(md.includes('## Validations') && md.includes('**ok**') && md.includes('**ko**'), 'validations section in the report');
+    assert.ok(md.includes('## Possible secrets') && md.includes('src/config.ts:1'), 'secrets section in the report');
+    // commit message into the SCM box (git extension API)
+    const gitExt = vscode.extensions.getExtension<any>('vscode.git');
+    const api = gitExt?.isActive ? gitExt.exports.getAPI(1) : (await gitExt!.activate()).getAPI(1);
+    await vscode.commands.executeCommand('changekeeper.commitMessageToScm');
+    const repo = api.getRepository(g.folder.uri);
+    if (repo) assert.ok(/^(feat|fix|docs|test|build|ci|chore)/.test(repo.inputBox.value), `scm input box: ${repo.inputBox.value.slice(0, 30)}`);
+  });
+
   it('new session re-baselines: current state becomes the baseline; stop clears the active session', async () => {
     const g = await guard();
     fs.writeFileSync(abs('README.md'), '# demo changed before re-baseline' + String.fromCharCode(10));

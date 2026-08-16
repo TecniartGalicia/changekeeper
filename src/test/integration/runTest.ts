@@ -51,7 +51,8 @@ async function main(): Promise<void> {
       extensionDevelopmentPath,
       extensionTestsPath,
       launchArgs: [workspace, `--user-data-dir=${userDataDir}`, '--disable-extensions', '--disable-workspace-trust'],
-      extensionTestsEnv: { CK_IT_WORKSPACE: workspace, CK_IT_TMP: tmp },
+      // CK_PRO_DEV unlocks the Pro tier without network (never set it in a user's environment)
+      extensionTestsEnv: { CK_IT_WORKSPACE: workspace, CK_IT_TMP: tmp, CK_PRO_DEV: '1' },
     });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

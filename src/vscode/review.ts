@@ -13,6 +13,8 @@ import { FileNode, HunkNode, Node, SessionNode } from './views/tree';
  * to the active editor / a folder pick.
  */
 export class ReviewCommands {
+  /** hook run before a session is stopped (Pro: onSessionEnd validations) */
+  beforeStop: ((guard: FolderGuard) => Promise<void>) | undefined;
   constructor(private readonly manager: GuardManager) {}
 
   // ---- helpers ------------------------------------------------------------------------------
@@ -309,6 +311,7 @@ export class ReviewCommands {
       void vscode.window.showInformationMessage(l10n.t('ChangeKeeper: no running session.'));
       return;
     }
+    if (this.beforeStop) await this.beforeStop(guard).catch(() => undefined);
     await guard.stop();
     void vscode.window.setStatusBarMessage(l10n.t('ChangeKeeper: session stopped for {0}', guard.folder.name), 3000);
   }
