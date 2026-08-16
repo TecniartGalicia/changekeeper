@@ -21,7 +21,7 @@
   "cmd.openFile": "Open File",
   "cmd.purgeData": "Purge All ChangeKeeper Data",
   "cmd.resumeBurst": "Resolve Paused Burst",
-  "cfg.autoStart": "When to start guarding a folder automatically. `git`: folders inside a git repository (baseline from the index, no copies). `always`: any folder (non-git folders are copied, within limits). `off`: only when you run **New Session**.",
+  "cfg.autoStart": "When to start guarding a folder automatically. `git`: folders inside a git repository (baseline from the index, no copies). `always`: any folder (non-git folders are copied, within limits). `whenAgentDetected`: when a Pro agent hook reports a session start. `off`: only when you run **New Session**.",
   "cfg.autoStart.git": "Folders inside a git repository",
   "cfg.autoStart.always": "Every folder",
   "cfg.autoStart.off": "Never (manual)",
@@ -50,5 +50,10 @@
   "cfg.validations.command": "Shell command, run in the workspace folder (or `cwd`)",
   "cfg.validations.cwd": "Sub-folder to run in (relative)",
   "cfg.validations.runOn": "When it runs",
-  "cfg.validations.timeoutSec": "Kill after this many seconds (default 600)"
+  "cfg.validations.timeoutSec": "Kill after this many seconds (default 600)",
+  "cmd.hooks.install": "Install Agent Hooks (Claude Code)…",
+  "cmd.hooks.revert": "Revert Agent Hooks",
+  "cmd.hooks.doctor": "Agent Hooks Doctor",
+  "cfg.autoStart.whenAgentDetected": "Only when an agent hook reports a session start (Pro hooks)",
+  "cfg.hooks.port": "Pro. Local port (127.0.0.1) where the agent hooks post. Change it only if it clashes; reinstall the hooks afterwards."
 }

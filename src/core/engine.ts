@@ -118,6 +118,7 @@ export class Engine {
   private ignoreCache = new Map<string, boolean>(); // pathKey → ignored (frozen per session)
   private viewCache = new Map<string, FileView>();
   private writingOurselves = new Map<string, string>(); // pathKey → sha we are writing (suppression)
+  private agentTouches = new Map<string, string>(); // pathKey → agent tag reported by a hook
   readonly burst: BurstDetector;
   burstQueue: string[] = [];
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
@@ -249,6 +250,16 @@ export class Engine {
   /** Persist + notify after an external mutation of the session (validation runs, labels…). */
   touch(): void {
     this.schedulePersist();
+  }
+
+  /** A hook told us which agent just edited this path (attribution for the next inspection). */
+  noteAgentTouch(rel: string, agent: string): void {
+    this.agentTouches.set(pathKey(rel), agent);
+    const ch = this.session?.changes[pathKey(rel)];
+    if (ch && ch.agent !== agent) {
+      ch.agent = agent;
+      this.schedulePersist();
+    }
   }
 
   private schedulePersist(): void {
@@ -702,6 +713,8 @@ export class Engine {
     ch.baselineUnavailable = base.kind === 'unavailable' ? base.reason : undefined;
     ch.baselineUncertain = uncertain || undefined;
     ch.eolOnly = undefined;
+    const touchedBy = this.agentTouches.get(k);
+    if (touchedBy) ch.agent = touchedBy;
     let hunkBase: BaselineResolution = base;
     if (base.kind === 'none') {
       // new file; a rename when a deleted file has exactly these bytes as baseline

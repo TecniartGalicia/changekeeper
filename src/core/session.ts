@@ -76,6 +76,8 @@ export interface FileChange {
   lastChangeAt: string;
   /** Pro: possible secrets in added lines (redacted; label + line) */
   secrets?: { label: string; line: number; redacted: string }[];
+  /** Pro: agent that last touched the file according to a hook (claude-code, copilot…) */
+  agent?: string;
 }
 
 export interface RestoreRecord {

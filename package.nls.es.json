@@ -21,7 +21,7 @@
   "cmd.openFile": "Abrir fichero",
   "cmd.purgeData": "Purgar todos los datos de ChangeKeeper",
   "cmd.resumeBurst": "Resolver ráfaga en pausa",
-  "cfg.autoStart": "Cuándo empezar a vigilar una carpeta automáticamente. `git`: carpetas dentro de un repositorio git (línea base desde el índice, sin copias). `always`: cualquier carpeta (las que no son git se copian, con límites). `off`: solo cuando ejecutes **Nueva sesión**.",
+  "cfg.autoStart": "Cuándo empezar a vigilar una carpeta automáticamente. `git`: carpetas dentro de un repositorio git (línea base desde el índice, sin copias). `always`: cualquier carpeta (las que no son git se copian, con límites). `whenAgentDetected`: cuando un hook de agente (Pro) informa del inicio de una sesión. `off`: solo cuando ejecutes **Nueva sesión**.",
   "cfg.autoStart.git": "Carpetas dentro de un repositorio git",
   "cfg.autoStart.always": "Todas las carpetas",
   "cfg.autoStart.off": "Nunca (manual)",
@@ -50,5 +50,10 @@
   "cfg.validations.command": "Comando de shell, ejecutado en la carpeta del espacio de trabajo (o `cwd`)",
   "cfg.validations.cwd": "Subcarpeta donde ejecutarlo (relativa)",
   "cfg.validations.runOn": "Cuándo se ejecuta",
-  "cfg.validations.timeoutSec": "Matar pasados estos segundos (600 por defecto)"
+  "cfg.validations.timeoutSec": "Matar pasados estos segundos (600 por defecto)",
+  "cmd.hooks.install": "Instalar hooks de agente (Claude Code)…",
+  "cmd.hooks.revert": "Revertir hooks de agente",
+  "cmd.hooks.doctor": "Doctor de hooks de agente",
+  "cfg.autoStart.whenAgentDetected": "Solo cuando un hook de agente informa del inicio de una sesión (hooks Pro)",
+  "cfg.hooks.port": "Pro. Puerto local (127.0.0.1) donde envían los hooks de agente. Cámbialo solo si choca; reinstala los hooks después."
 }

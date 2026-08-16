@@ -82,7 +82,8 @@
     "test:integration": "npm run build && npm run compile-tests && node ./out/test/integration/runTest.js",
     "l10n": "node scripts/l10n-sync.mjs",
     "package": "vsce package --no-dependencies",
-    "check": "npm run typecheck && npm run lint && npm test"
+    "check": "npm run typecheck && npm run lint && npm test",
+    "vscode:uninstall": "node ./dist/uninstall.js"
   },
   "dependencies": {
     "diff": "^8.0.2",
@@ -292,6 +293,21 @@
         "command": "changekeeper.pro.buy",
         "title": "%cmd.pro.buy%",
         "category": "ChangeKeeper Pro"
+      },
+      {
+        "command": "changekeeper.hooks.install",
+        "title": "%cmd.hooks.install%",
+        "category": "ChangeKeeper Pro"
+      },
+      {
+        "command": "changekeeper.hooks.revert",
+        "title": "%cmd.hooks.revert%",
+        "category": "ChangeKeeper"
+      },
+      {
+        "command": "changekeeper.hooks.doctor",
+        "title": "%cmd.hooks.doctor%",
+        "category": "ChangeKeeper"
       }
     ],
     "menus": {
@@ -452,6 +468,16 @@
           "command": "changekeeper.pro.status",
           "when": "view == changekeeper.changes",
           "group": "4_pro@2"
+        },
+        {
+          "command": "changekeeper.hooks.install",
+          "when": "view == changekeeper.changes",
+          "group": "4_pro@3"
+        },
+        {
+          "command": "changekeeper.hooks.doctor",
+          "when": "view == changekeeper.changes",
+          "group": "4_pro@4"
         }
       ],
       "view/item/context": [
@@ -574,11 +600,13 @@
           "enum": [
             "git",
             "always",
+            "whenAgentDetected",
             "off"
           ],
           "enumDescriptions": [
             "%cfg.autoStart.git%",
             "%cfg.autoStart.always%",
+            "%cfg.autoStart.whenAgentDetected%",
             "%cfg.autoStart.off%"
           ],
           "default": "git",
@@ -689,6 +717,14 @@
               }
             }
           }
+        },
+        "changekeeper.hooks.port": {
+          "type": "number",
+          "default": 47391,
+          "minimum": 1024,
+          "maximum": 65535,
+          "scope": "machine",
+          "markdownDescription": "%cfg.hooks.port%"
         }
       }
     },

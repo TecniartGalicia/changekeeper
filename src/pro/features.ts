@@ -7,6 +7,7 @@ import { FolderGuard } from '../vscode/folderGuard';
 import { GuardManager } from '../vscode/guardManager';
 import { ReportCommands } from '../vscode/reportCommands';
 import { ValidationRunner } from '../vscode/validate';
+import { HooksFeature } from '../vscode/hooks';
 import { activateLicenseCommand, deactivateLicenseCommand, ensurePro, licenseStatusCommand, openCheckout, proStatus } from './licenseService';
 
 /**
@@ -17,13 +18,16 @@ import { activateLicenseCommand, deactivateLicenseCommand, ensurePro, licenseSta
 export class ProFeatures implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   readonly validations: ValidationRunner;
+  readonly hooks: HooksFeature;
   private scannerOn = false;
 
   constructor(private readonly context: vscode.ExtensionContext, private readonly manager: GuardManager, reports: ReportCommands) {
     this.validations = new ValidationRunner(context, manager);
+    this.hooks = new HooksFeature(context, manager, (feature) => ensurePro(context, feature));
     reports.extraSections.push(async (g) => [...this.validations.section(g), ...this.secretsSection(g)]);
     this.disposables.push(
       this.validations,
+      this.hooks,
       vscode.commands.registerCommand('changekeeper.validate', () => this.validations.runAll()),
       vscode.commands.registerCommand('changekeeper.validateOne', () => this.validations.runOne()),
       vscode.commands.registerCommand('changekeeper.addValidation', () => this.validations.addPreset()),

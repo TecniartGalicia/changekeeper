@@ -18,7 +18,7 @@ export function log(line: string): void {
   output().appendLine(`[${new Date().toISOString()}] ${line}`);
 }
 
-export type AutoStart = 'git' | 'always' | 'off';
+export type AutoStart = 'git' | 'always' | 'whenAgentDetected' | 'off';
 
 /** Keys an agent could set in `.vscode/settings.json` to blind or cripple the next session (PLAN §4.5 / audit T5). */
 export const WORKSPACE_SENSITIVE_KEYS = ['autoStart', 'exclude', 'excludeDefaults', 'criticalGlobs', 'maxFileSizeKB', 'burstThreshold'] as const;

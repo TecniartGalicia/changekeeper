@@ -5,7 +5,7 @@ All notable changes to ChangeKeeper are documented here. The format follows [Kee
 ## [0.2.0] - unreleased
 
 ### Added
-- **Pro tier** (7 €, one-time, licence key via Polar): validations after review (Task API, confirmed per command and per resolved package.json script, never in Restricted Mode), local secret scanner over added lines (redacted findings in tree and report), commit message straight into the SCM input box, licence commands (enter key, status, deactivate, buy). Everything Pro adds can be removed without a licence.
+- **Pro tier** (7 €, one-time, licence key via Polar): validations after review (confirmed per command and per resolved package.json script, exact exit codes, never in Restricted Mode), local secret scanner over added lines (redacted findings in tree and report), commit message straight into the SCM input box, **agent hooks** (opt-in HTTP hooks for Claude Code with consent/backup/revert/doctor; files tagged with the agent that edited them; `autoStart: whenAgentDetected`), licence commands (enter key, status, deactivate, buy). Everything Pro adds can be removed without a licence; the hooks are also removed on uninstall.
 - Discarding a hunk on disk (closed document) now keeps the previous bytes: it can be undone with **Undo last restore**.
 - Renamed files diff against the baseline of their source; CodeLens sits on the first changed line; accept/discard at cursor work from the baseline side of the diff too.
 
@@ -34,4 +34,4 @@ First public preview.
 - English and Spanish.
 
 ### Not in this version
-- Validations, secret scanning, agent attribution through hooks and the commit message straight into the SCM box arrive with the optional Pro tier in 0.2.0/0.3.0.
+- Validations, secret scanning, agent attribution through hooks and the commit message straight into the SCM box arrive with the optional Pro tier in 0.2.0.

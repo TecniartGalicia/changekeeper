@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import * as settingsEdit from '../../../core/hooks/settingsEdit';
 
 /**
  * End-to-end in a real VS Code: the workspace opened by runTest.ts is a small git repo, so the
@@ -244,6 +245,45 @@ describe('ChangeKeeper end to end', function () {
     await vscode.commands.executeCommand('changekeeper.commitMessageToScm');
     const repo = api.getRepository(g.folder.uri);
     if (repo) assert.ok(/^(feat|fix|docs|test|build|ci|chore)/.test(repo.inputBox.value), `scm input box: ${repo.inputBox.value.slice(0, 30)}`);
+  });
+
+  it('Pro hooks: a real POST to the local receiver tags the file with its agent (token required)', async () => {
+    const g = await guard();
+    const pro = await vscode.commands.executeCommand<any>('changekeeper._pro');
+    const server = pro.hooks.server;
+    await until(() => (server.isOwner ? true : undefined), 'this window owns the hook port', 30000);
+    const token: string = await server.token();
+    const port: number = server.currentPort;
+    const http = await import('http');
+    const post = (body: any, tok?: string) =>
+      new Promise<number>((resolve, reject) => {
+        const data = Buffer.from(JSON.stringify(body));
+        const req = http.request({ host: '127.0.0.1', port, path: '/hook', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': data.length, ...(tok ? { 'X-CK-Token': tok } : {}) } }, (res) => {
+          res.resume();
+          res.on('end', () => resolve(res.statusCode ?? 0));
+        });
+        req.on('error', reject);
+        req.end(data);
+      });
+    // without the token: refused
+    assert.strictEqual(await post({ hook_event_name: 'Stop' }), 401);
+    // an agent edits a file and its PostToolUse hook fires
+    fs.writeFileSync(abs('src/hooked.ts'), 'export const hooked = 1;' + String.fromCharCode(10));
+    const status = await post({ session_id: 's1', transcript_path: 'C:/Users/x/.claude/projects/p/t.jsonl', cwd: WS, permission_mode: 'default', hook_event_name: 'PostToolUse', tool_name: 'Write', tool_input: { file_path: abs('src/hooked.ts'), content: 'x' }, tool_response: {} }, token);
+    assert.strictEqual(status, 204);
+    const ch = await until(() => {
+      const c = changeOf(g, 'src/hooked.ts');
+      return c && c.agent ? c : undefined;
+    }, 'change tagged with the agent');
+    assert.strictEqual(ch.agent, 'claude-code');
+    // session start from an agent when a session already exists: the session gets the tag
+    await post({ hook_event_name: 'SessionStart', cwd: WS, transcript_path: '/home/u/.claude/x', session_id: 's1' }, token);
+    await until(() => (g.engine.session.agent === 'claude-code' ? true : undefined), 'session tagged');
+    // hooks doctor / settings editing on a scratch file (never the real ~/.claude/settings.json in tests)
+    const added = settingsEdit.addChangeKeeperHooks({}, port, token);
+    assert.strictEqual(settingsEdit.installedHooks(added.next).length, 4);
+    const doctor: string = await pro.hooks.installer.report([WS]);
+    assert.ok(doctor.includes(String(port)), 'doctor mentions the port');
   });
 
   it('new session re-baselines: current state becomes the baseline; stop clears the active session', async () => {

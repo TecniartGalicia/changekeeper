@@ -5,12 +5,14 @@ const watch = process.argv.includes('--watch');
 
 /** @type {import('esbuild').BuildOptions} */
 const options = {
-  entryPoints: ['src/extension.ts'],
+  // extension.ts → dist/extension.js ; hook/uninstall.ts → dist/uninstall.js (vscode:uninstall script)
+  entryPoints: ['src/extension.ts', 'src/hook/uninstall.ts'],
   bundle: true,
   format: 'cjs',
   platform: 'node',
   target: 'node20',
-  outfile: 'dist/extension.js',
+  outdir: 'dist',
+  entryNames: '[name]',
   external: ['vscode'],
   sourcemap: !production,
   minify: production,

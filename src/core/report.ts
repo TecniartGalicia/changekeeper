@@ -44,7 +44,7 @@ export function buildReport(session: Session, opts: ReportOptions): string {
   if (!files.length) lines.push('_No changes since the baseline._');
   for (const f of files) {
     const hunkIds = Object.keys(f.hunks);
-    lines.push(`- ${mark(f)} \`${f.path}\`${f.renamedFrom ? ` (from \`${f.renamedFrom}\`)` : ''} — ${statusOf(f)}${hunkIds.length ? ` · ${hunkIds.length} hunk(s)` : ''}${f.binary ? ' · binary' : ''}${f.tooLarge ? ' · too large' : ''}${f.baselineUnavailable ? ' · no baseline' : ''}${f.baselineUncertain ? ' · baseline uncertain' : ''}`);
+    lines.push(`- ${mark(f)} \`${f.path}\`${f.renamedFrom ? ` (from \`${f.renamedFrom}\`)` : ''} — ${statusOf(f)}${hunkIds.length ? ` · ${hunkIds.length} hunk(s)` : ''}${f.agent ? ` · by ${f.agent}` : ''}${f.binary ? ' · binary' : ''}${f.tooLarge ? ' · too large' : ''}${f.baselineUnavailable ? ' · no baseline' : ''}${f.baselineUncertain ? ' · baseline uncertain' : ''}`);
     for (const id of hunkIds.sort((a, b) => (f.hunkMeta?.[a]?.newStart ?? 0) - (f.hunkMeta?.[b]?.newStart ?? 0))) {
       const m = f.hunkMeta?.[id];
       // critical files (.env, keys, CI…) may hold secrets on the very line that changed: keep only the range

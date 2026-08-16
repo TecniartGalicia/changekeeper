@@ -16,7 +16,7 @@ Baseline copies can contain whatever your files contain — including secrets �
 
 ## What it reads
 - Your workspace files (to detect and diff changes), the git index and objects of the repository (through your `git` executable), and open editor documents.
-- No configuration files of any agent are read or written in this version.
+- Agent configuration files are only touched when you run **ChangeKeeper Pro: Install Agent Hooks** (Claude Code's `~/.claude/settings.json` or a project's `.claude/settings.local.json`): our HTTP hook entries are added after a consent dialog and a byte-exact backup, nothing else in the file changes, and **Revert Agent Hooks** (or uninstalling the extension) removes them. The hooks post to `127.0.0.1` on this machine only.
 
 ## Network
 None in the free features. **Pro licence:** when you enter a licence key, ChangeKeeper calls Polar (`api.polar.sh`) to activate it and again at most once every 24 hours to re-validate it (14-day offline grace). Sent: the key, this computer's name, your operating system and the extension version — never any file, path or setting. Machines where no key was entered make no network calls at all.

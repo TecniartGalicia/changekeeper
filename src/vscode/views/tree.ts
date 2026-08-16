@@ -118,6 +118,7 @@ export class ChangesTree implements vscode.TreeDataProvider<Node> {
     if (c.baselineUncertain) parts.push(l10n.t('baseline uncertain'));
     if (c.eolOnly) parts.push(l10n.t('line endings only'));
     if (c.secrets?.length) parts.push(l10n.t('{0} possible secret(s)', c.secrets.length));
+    if (c.agent) parts.push(c.agent);
     item.description = parts.join(' · ');
     const [icon, color] = KIND_ICON[c.kind];
     item.iconPath = c.secrets?.length && !reviewed ? new vscode.ThemeIcon('key', new vscode.ThemeColor('list.errorForeground')) : c.critical && !reviewed ? new vscode.ThemeIcon('warning', new vscode.ThemeColor('list.warningForeground')) : new vscode.ThemeIcon(icon, new vscode.ThemeColor(color));

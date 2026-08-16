@@ -16,7 +16,7 @@ Las copias de línea base pueden contener lo que contengan tus ficheros — secr
 
 ## Qué lee
 - Los ficheros de tu espacio de trabajo (para detectar y comparar cambios), el índice y los objetos git del repositorio (a través de tu ejecutable `git`) y los documentos abiertos en el editor.
-- En esta versión no se lee ni se escribe ningún fichero de configuración de ningún agente.
+- Los ficheros de configuración de agentes solo se tocan al ejecutar **ChangeKeeper Pro: Instalar hooks de agente** (`~/.claude/settings.json` de Claude Code o `.claude/settings.local.json` de un proyecto): se añaden nuestras entradas de hook HTTP tras un diálogo de consentimiento y una copia byte a byte, nada más del fichero cambia, y **Revertir hooks de agente** (o desinstalar la extensión) las quita. Los hooks solo envían a `127.0.0.1` en esta máquina.
 
 ## Red
 Ninguna en las funciones gratuitas. **Licencia Pro:** al introducir una clave, ChangeKeeper llama a Polar (`api.polar.sh`) para activarla y, como mucho, una vez cada 24 horas para revalidarla (14 días de gracia sin conexión). Se envía: la clave, el nombre de este equipo, tu sistema operativo y la versión de la extensión — nunca ficheros, rutas ni ajustes. Los equipos sin clave no hacen ninguna llamada de red.
