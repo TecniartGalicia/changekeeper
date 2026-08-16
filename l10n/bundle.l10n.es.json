@@ -194,5 +194,7 @@
   "Add a validation to run after review": "Añadir una validación para ejecutar tras la revisión",
   "Command to run (in the workspace folder)": "Comando a ejecutar (en la carpeta del espacio de trabajo)",
   "Name": "Nombre",
-  "ChangeKeeper: validation \"{0}\" added. Run it from the ChangeKeeper view; set runOn to \"afterReview\" in settings to run it automatically once every hunk is reviewed.": "ChangeKeeper: validación «{0}» añadida. Ejecútala desde la vista ChangeKeeper; pon runOn en «afterReview» en los ajustes para que se ejecute sola cuando todos los bloques estén revisados."
+  "ChangeKeeper: validation \"{0}\" added. Run it from the ChangeKeeper view; set runOn to \"afterReview\" in settings to run it automatically once every hunk is reviewed.": "ChangeKeeper: validación «{0}» añadida. Ejecútala desde la vista ChangeKeeper; pon runOn en «afterReview» en los ajustes para que se ejecute sola cuando todos los bloques estén revisados.",
+  "{0} possible secret(s)": "{0} posible(s) secreto(s)",
+  "Possible secrets in added lines (Pro, heuristic):": "Posibles secretos en líneas añadidas (Pro, heurístico):"
 }
