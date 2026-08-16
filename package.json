@@ -86,7 +86,7 @@
     "vscode:uninstall": "node ./dist/uninstall.js"
   },
   "dependencies": {
-    "diff": "^8.0.2",
+    "diff": "^9.0.0",
     "ignore": "^7.0.5",
     "minimatch": "^10.0.3"
   },
