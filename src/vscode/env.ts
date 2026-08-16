@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as vscode from 'vscode';
 import { DEFAULT_LIMITS, Limits } from '../core/guardrails';
 import { buildRuleSet, RuleSet } from '../core/rules/exclude';
@@ -19,28 +20,58 @@ export function log(line: string): void {
 
 export type AutoStart = 'git' | 'always' | 'off';
 
+/** Keys an agent could set in `.vscode/settings.json` to blind or cripple the next session (PLAN §4.5 / audit T5). */
+export const WORKSPACE_SENSITIVE_KEYS = ['autoStart', 'exclude', 'excludeDefaults', 'criticalGlobs', 'maxFileSizeKB', 'burstThreshold'] as const;
+
 export interface FolderConfig {
   autoStart: AutoStart;
   rules: RuleSet;
   limits: Limits;
   codeLens: boolean;
   decorations: boolean;
+  /** sensitive keys that have a workspace/folder value */
+  workspaceOverrides: string[];
+  /** stable hash of those workspace values (approval token) */
+  overridesHash: string;
+  /** the same configuration computed from user-level values only (used until approval) */
+  userOnly?: FolderConfig;
+  pendingApproval?: boolean;
+}
+
+function fromValues(v: { autoStart: AutoStart; exclude: string[]; excludeDefaults: boolean; criticalGlobs: string[]; maxFileSizeKB: number; burstThreshold: number; codeLens: boolean; decorations: boolean }): Omit<FolderConfig, 'workspaceOverrides' | 'overridesHash'> {
+  const rules = buildRuleSet({ userExcludes: v.exclude, excludeDefaults: v.excludeDefaults, userCritical: v.criticalGlobs });
+  const limits: Limits = { ...DEFAULT_LIMITS, maxFileBytes: Math.max(16, v.maxFileSizeKB) * 1024, burstThreshold: Math.max(20, v.burstThreshold) };
+  return { autoStart: v.autoStart, rules, limits, codeLens: v.codeLens, decorations: v.decorations };
 }
 
 export function readFolderConfig(folder: vscode.WorkspaceFolder): FolderConfig {
   const cfg = vscode.workspace.getConfiguration('changekeeper', folder.uri);
-  const autoStart = cfg.get<AutoStart>('autoStart', 'git');
-  const rules = buildRuleSet({
-    userExcludes: cfg.get<string[]>('exclude', []),
+  const effective = {
+    autoStart: cfg.get<AutoStart>('autoStart', 'git'),
+    exclude: cfg.get<string[]>('exclude', []),
     excludeDefaults: cfg.get<boolean>('excludeDefaults', true),
-    userCritical: cfg.get<string[]>('criticalGlobs', []),
-  });
-  const limits: Limits = {
-    ...DEFAULT_LIMITS,
-    maxFileBytes: Math.max(16, cfg.get<number>('maxFileSizeKB', 2048)) * 1024,
-    burstThreshold: Math.max(20, cfg.get<number>('burstThreshold', 500)),
+    criticalGlobs: cfg.get<string[]>('criticalGlobs', []),
+    maxFileSizeKB: cfg.get<number>('maxFileSizeKB', 2048),
+    burstThreshold: cfg.get<number>('burstThreshold', 500),
+    codeLens: cfg.get<boolean>('codeLens', true),
+    decorations: cfg.get<boolean>('decorations', true),
   };
-  return { autoStart, rules, limits, codeLens: cfg.get<boolean>('codeLens', true), decorations: cfg.get<boolean>('decorations', true) };
+  const overrides: string[] = [];
+  const overrideValues: Record<string, unknown> = {};
+  const userOnlyValues: any = { ...effective };
+  for (const key of WORKSPACE_SENSITIVE_KEYS) {
+    const insp = cfg.inspect<any>(key);
+    const wsValue = insp?.workspaceFolderValue !== undefined ? insp.workspaceFolderValue : insp?.workspaceValue;
+    if (wsValue !== undefined) {
+      overrides.push(key);
+      overrideValues[key] = wsValue;
+      userOnlyValues[key] = insp?.globalValue !== undefined ? insp.globalValue : insp?.defaultValue;
+    }
+  }
+  const overridesHash = overrides.length ? crypto.createHash('sha256').update(JSON.stringify(overrideValues)).digest('hex').slice(0, 24) : '';
+  const base = fromValues(effective);
+  const userOnly = overrides.length ? { ...fromValues(userOnlyValues), workspaceOverrides: [], overridesHash: '' } : undefined;
+  return { ...base, workspaceOverrides: overrides, overridesHash, userOnly };
 }
 
 export function readRetention(): { days: number; maxBytes: number } {

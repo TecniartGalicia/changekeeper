@@ -55,7 +55,7 @@ describe('ChangeKeeper end to end', function () {
     const rows = g.engine.baseline.rows.map((r: any) => r[0]);
     assert.ok(rows.includes('src/app.ts'));
     assert.strictEqual(g.engine.changes().length, 0);
-    for (const cmd of ['changekeeper.startSession', 'changekeeper.stopSession', 'changekeeper.reviewAll', 'changekeeper.restoreSession', 'changekeeper.undoRestore', 'changekeeper.purgeData', 'changekeeper.acceptHunkFromGutter']) {
+    for (const cmd of ['changekeeper.startSession', 'changekeeper.stopSession', 'changekeeper.reviewAll', 'changekeeper.restoreSession', 'changekeeper.undoRestore', 'changekeeper.purgeData', 'changekeeper.acceptHunkAtCursor', 'changekeeper.discardHunkAtCursor', 'changekeeper.showReport', 'changekeeper.exportReport', 'changekeeper.copyCommitMessage']) {
       assert.ok((await vscode.commands.getCommands(true)).includes(cmd), cmd);
     }
   });
@@ -107,7 +107,6 @@ describe('ChangeKeeper end to end', function () {
     assert.strictEqual(doc.isDirty, true);
     await doc.save();
     await vscode.commands.executeCommand('workbench.action.closeAllEditors');
-    await until(() => (vscode.workspace.textDocuments.some((d) => d.uri.fsPath === doc.uri.fsPath && !d.isClosed) ? undefined : true), 'document closed', 10000).catch(() => undefined);
   });
 
   it('tracks new, deleted and critical files; restore and undo work end to end', async () => {
@@ -145,21 +144,62 @@ describe('ChangeKeeper end to end', function () {
     await until(() => (g.engine.changes().length >= 4 ? true : undefined), 'changes settled');
   });
 
-  it('accept from the diff gutter marks overlapping hunks accepted (synthetic VS Code context)', async () => {
+  it('accept/discard at cursor work in the editor; the report and commit message are produced', async () => {
     const g = await guard();
     fs.writeFileSync(abs('src/app.ts'), 'export function add(a: number, b: number) {\n  return a + b; // again\n}\n\nexport const VERSION = 1;\n\nexport function sub(a: number, b: number) {\n  return a - b;\n}\n');
     const ch = await until(() => changeOf(g, 'src/app.ts'), 'change');
     const view = await g.engine.view('src/app.ts');
     assert.strictEqual(view.hunks.length, 1);
-    await vscode.commands.executeCommand('changekeeper.acceptHunkFromGutter', { modifiedUri: uriOf('src/app.ts'), mapping: { modified: { startLineNumber: 2, endLineNumberExclusive: 3 } } });
+    // gutter-shaped argument (mapping) still understood, no proposed API needed
+    await vscode.commands.executeCommand('changekeeper.acceptHunkAtCursor', { modifiedUri: uriOf('src/app.ts'), mapping: { modified: { startLineNumber: 2, endLineNumberExclusive: 3 } } });
     assert.strictEqual(ch.hunks[view.hunks[0].id], 'accepted');
+    // cursor-based: open the file, put the cursor on the changed line, discard
+    const doc = await vscode.workspace.openTextDocument(uriOf('src/app.ts'));
+    const editor = await vscode.window.showTextDocument(doc);
+    editor.selection = new vscode.Selection(1, 0, 1, 0);
+    await vscode.commands.executeCommand('changekeeper.discardHunkAtCursor');
+    await until(() => (changeOf(g, 'src/app.ts') ? undefined : true), 'change removed by discard at cursor');
+    assert.ok(!doc.getText().includes('// again'));
+    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    // report: markdown document with the session summary + commit message on the clipboard
+    fs.writeFileSync(abs('src/report-me.ts'), 'export const r = 1;\n');
+    await until(() => changeOf(g, 'src/report-me.ts'), 'report file');
+    const reports = await vscode.commands.executeCommand<any>('changekeeper._reports');
+    const md: string = await reports.build(g);
+    assert.ok(md.includes('# ChangeKeeper session report'), 'report header');
+    assert.ok(md.includes('src/report-me.ts'), 'report lists the file');
+    assert.ok(md.includes('## Suggested commit message'));
+    await vscode.commands.executeCommand('changekeeper.copyCommitMessage');
+    const clip = await vscode.env.clipboard.readText();
+    assert.ok(/^(feat|fix|docs|test|build|ci|chore)/.test(clip), `commit message on clipboard: ${clip.slice(0, 40)}`);
     // review all opens the multi-diff editor without throwing
     await vscode.commands.executeCommand('changekeeper.reviewAll');
     await vscode.commands.executeCommand('workbench.action.closeAllEditors');
   });
 
+  it('a directory moved by a CLI is seen: old children deleted, new ones added (rename by content)', async () => {
+    const g = await guard();
+    fs.mkdirSync(abs('lib'), { recursive: true });
+    fs.writeFileSync(abs('lib/one.ts'), 'export const one = 1;\n');
+    fs.writeFileSync(abs('lib/two.ts'), 'export const two = 2;\n');
+    await until(() => changeOf(g, 'lib/one.ts') && changeOf(g, 'lib/two.ts'), 'new dir children');
+    // start a fresh session so lib/* is part of the baseline, then move the directory like `mv lib moved`
+    await g.start({ silent: true });
+    await until(() => (g.engine.changes().length === 0 ? true : undefined), 'clean after re-baseline');
+    fs.renameSync(abs('lib'), abs('moved'));
+    const d1 = await until(() => changeOf(g, 'lib/one.ts'), 'old child seen as deleted');
+    assert.strictEqual(d1.kind, 'D');
+    const m1 = await until(() => changeOf(g, 'moved/one.ts'), 'new child seen');
+    assert.ok(m1.kind === 'R' || m1.kind === 'A', `moved/one.ts is ${m1.kind}`);
+    // move it back: everything settles to "no change"
+    fs.renameSync(abs('moved'), abs('lib'));
+    await until(() => (changeOf(g, 'lib/one.ts') || changeOf(g, 'moved/one.ts') ? undefined : true), 'ghosts cleared after moving back');
+  });
+
   it('new session re-baselines: current state becomes the baseline; stop clears the active session', async () => {
     const g = await guard();
+    fs.writeFileSync(abs('README.md'), '# demo changed before re-baseline' + String.fromCharCode(10));
+    await until(() => changeOf(g, 'README.md'), 'change before re-baseline');
     assert.ok(g.engine.changes().length > 0);
     await g.start({ silent: true });
     await until(() => (g.engine.changes().length === 0 ? true : undefined), 'no changes after re-baseline');

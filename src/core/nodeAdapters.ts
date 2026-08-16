@@ -43,8 +43,9 @@ export class NodeFs implements FsAdapter {
     }
   }
 
-  async writeFile(abs: string, data: Buffer): Promise<void> {
+  async writeFile(abs: string, data: Buffer, mode?: number): Promise<void> {
     await atomicWrite(abs, data);
+    if (mode !== undefined && process.platform !== 'win32') await fs.chmod(abs, mode).catch(() => undefined);
   }
 
   async unlink(abs: string): Promise<void> {

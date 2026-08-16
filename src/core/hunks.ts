@@ -34,14 +34,14 @@ export interface Hunk {
 export interface HunkOptions {
   /** unchanged lines kept around each change (default 3) */
   context?: number;
-  /** abort the Myers search after this many ms and fall back to a single whole-file hunk */
+  /** abort the Myers search after this many ms (default 500: the diff runs on the extension host thread) and fall back to a single whole-file hunk */
   timeoutMs?: number;
 }
 
 /** Diffs two plain-line arrays and groups the changes into hunks. */
 export function computeHunks(oldLines: readonly string[], newLines: readonly string[], opts: HunkOptions = {}): Hunk[] {
   const context = opts.context ?? 3;
-  let changes = diffArrays(oldLines as string[], newLines as string[], { timeout: opts.timeoutMs ?? 3000 } as any) as
+  let changes = diffArrays(oldLines as string[], newLines as string[], { timeout: opts.timeoutMs ?? 500 } as any) as
     | { value: string[]; added: boolean; removed: boolean }[]
     | undefined;
   if (!changes) {

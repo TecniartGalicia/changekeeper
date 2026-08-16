@@ -213,7 +213,13 @@ describe('rules', () => {
     assert.deepStrictEqual(rules.decide('.env.local', true).watch, true);
     assert.deepStrictEqual(rules.decide('.claude/settings.local.json', true).critical, true);
     assert.deepStrictEqual(rules.decide('.git/HEAD', false), { watch: false, critical: false, reason: 'hard' });
-    assert.deepStrictEqual(rules.decide('node_modules/x/index.js', false).reason, 'excluded');
+    assert.deepStrictEqual(rules.decide('node_modules/x/index.js', false).reason, 'heavy');
+    // heavy trees are never critical (a dependency's package.json is not the user's manifest)
+    assert.deepStrictEqual(rules.decide('node_modules/x/package.json', false).watch, false);
+    assert.strictEqual(rules.isCritical('node_modules/x/package.json'), false);
+    assert.deepStrictEqual(rules.decide('.x.1.2.ck-tmp', false).reason, 'hard');
+    assert.strictEqual(rules.skipDir('node_modules'), true);
+    assert.strictEqual(rules.skipDir('dist'), false);
     assert.deepStrictEqual(rules.decide('src/generated/a.ts', false).reason, 'excluded');
     assert.deepStrictEqual(rules.decide('src/a.ts', true).reason, 'ignored');
     assert.deepStrictEqual(rules.decide('src/a.ts', false).reason, 'ok');

@@ -28,15 +28,35 @@ export function hasUtf8Bom(buf: Buffer): boolean {
   return buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf;
 }
 
-/** Decodes UTF-8 (BOM stripped). Non-UTF-8 files are decoded lossily; the engine only *writes back* bytes it read. */
-export function decodeText(buf: Buffer): { text: string; bom: boolean } {
+export type TextEncoding = 'utf8' | 'latin1';
+
+const utf8Fatal = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+
+/**
+ * Decodes text preserving round-trip fidelity: valid UTF-8 (BOM stripped and remembered) or, when the
+ * bytes are not valid UTF-8, latin1 (a byte↔char bijection, so re-encoding gives the exact bytes back).
+ * We never guess a "real" legacy code page: the goal is byte-exact discards, not pretty rendering.
+ */
+export function decodeText(buf: Buffer): { text: string; bom: boolean; encoding: TextEncoding } {
   const bom = hasUtf8Bom(buf);
-  return { text: (bom ? buf.subarray(3) : buf).toString('utf8'), bom };
+  const body = bom ? buf.subarray(3) : buf;
+  try {
+    return { text: utf8Fatal.decode(body), bom, encoding: 'utf8' };
+  } catch {
+    return { text: body.toString('latin1'), bom: false, encoding: 'latin1' };
+  }
 }
 
-export function encodeText(text: string, bom: boolean): Buffer {
+export function encodeText(text: string, bom: boolean, encoding: TextEncoding = 'utf8'): Buffer {
+  if (encoding === 'latin1') return Buffer.from(text, 'latin1');
   const body = Buffer.from(text, 'utf8');
   return bom ? Buffer.concat([UTF8_BOM, body]) : body;
+}
+
+/** True when every char fits in latin1 (so `encodeText(text, false, 'latin1')` is lossless). */
+export function fitsLatin1(text: string): boolean {
+  for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) > 0xff) return false;
+  return true;
 }
 
 /** Splits into lines keeping each line's own terminator. "" → [] ; "a" → [a/''] ; "a\n" → [a/\n]. */

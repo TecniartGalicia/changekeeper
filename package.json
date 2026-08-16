@@ -55,7 +55,10 @@
       "restrictedConfigurations": [
         "changekeeper.exclude",
         "changekeeper.excludeDefaults",
-        "changekeeper.criticalGlobs"
+        "changekeeper.criticalGlobs",
+        "changekeeper.autoStart",
+        "changekeeper.maxFileSizeKB",
+        "changekeeper.burstThreshold"
       ]
     },
     "virtualWorkspaces": {
@@ -76,7 +79,7 @@
     "lint": "eslint src",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run compile-tests && mocha \"out/test/unit/**/*.test.js\"",
-    "test:integration": "npm run compile-tests && node ./out/test/integration/runTest.js",
+    "test:integration": "npm run build && npm run compile-tests && node ./out/test/integration/runTest.js",
     "l10n": "node scripts/l10n-sync.mjs",
     "package": "vsce package --no-dependencies",
     "check": "npm run typecheck && npm run lint && npm test"
@@ -227,15 +230,27 @@
         "category": "ChangeKeeper"
       },
       {
-        "command": "changekeeper.acceptHunkFromGutter",
-        "title": "%cmd.acceptHunkGutter%",
+        "command": "changekeeper.resumeBurst",
+        "title": "%cmd.resumeBurst%",
+        "category": "ChangeKeeper"
+      },
+      {
+        "command": "changekeeper.acceptHunkAtCursor",
+        "title": "%cmd.acceptHunkAtCursor%",
         "category": "ChangeKeeper",
         "icon": "$(check)"
       },
       {
-        "command": "changekeeper.resumeBurst",
-        "title": "%cmd.resumeBurst%",
-        "category": "ChangeKeeper"
+        "command": "changekeeper.discardHunkAtCursor",
+        "title": "%cmd.discardHunkAtCursor%",
+        "category": "ChangeKeeper",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "changekeeper.copyCommitMessage",
+        "title": "%cmd.copyCommitMessage%",
+        "category": "ChangeKeeper",
+        "icon": "$(git-commit)"
       }
     ],
     "menus": {
@@ -265,10 +280,6 @@
           "when": "false"
         },
         {
-          "command": "changekeeper.acceptHunkFromGutter",
-          "when": "false"
-        },
-        {
           "command": "changekeeper.resumeBurst",
           "when": "changekeeper.burstPaused"
         },
@@ -279,6 +290,38 @@
         {
           "command": "changekeeper.undoRestore",
           "when": "changekeeper.canUndoRestore"
+        },
+        {
+          "command": "changekeeper.acceptHunkAtCursor",
+          "when": "changekeeper.hasSession && resourceScheme == file"
+        },
+        {
+          "command": "changekeeper.discardHunkAtCursor",
+          "when": "changekeeper.hasSession && resourceScheme == file"
+        },
+        {
+          "command": "changekeeper.showReport",
+          "when": "changekeeper.hasSession"
+        },
+        {
+          "command": "changekeeper.exportReport",
+          "when": "changekeeper.hasSession"
+        },
+        {
+          "command": "changekeeper.copyCommitMessage",
+          "when": "changekeeper.hasSession"
+        },
+        {
+          "command": "changekeeper.restoreSession",
+          "when": "changekeeper.hasChanges"
+        },
+        {
+          "command": "changekeeper.acceptAll",
+          "when": "changekeeper.hasChanges"
+        },
+        {
+          "command": "changekeeper.reviewAll",
+          "when": "changekeeper.hasChanges"
         }
       ],
       "view/title": [
@@ -289,7 +332,7 @@
         },
         {
           "command": "changekeeper.reviewAll",
-          "when": "view == changekeeper.changes && changekeeper.hasChanges",
+          "when": "view == changekeeper.changes && changekeeper.hasSession && changekeeper.hasChanges",
           "group": "navigation@2"
         },
         {
@@ -304,17 +347,17 @@
         },
         {
           "command": "changekeeper.acceptAll",
-          "when": "view == changekeeper.changes && changekeeper.hasChanges",
+          "when": "view == changekeeper.changes && changekeeper.hasSession && changekeeper.hasChanges",
           "group": "1_session@1"
         },
         {
           "command": "changekeeper.restoreSession",
-          "when": "view == changekeeper.changes && changekeeper.hasChanges",
+          "when": "view == changekeeper.changes && changekeeper.hasSession && changekeeper.hasChanges",
           "group": "1_session@2"
         },
         {
           "command": "changekeeper.undoRestore",
-          "when": "view == changekeeper.changes && changekeeper.canUndoRestore",
+          "when": "view == changekeeper.changes && changekeeper.hasSession && changekeeper.canUndoRestore",
           "group": "1_session@3"
         },
         {
@@ -331,6 +374,11 @@
           "command": "changekeeper.purgeData",
           "when": "view == changekeeper.changes",
           "group": "9_danger@1"
+        },
+        {
+          "command": "changekeeper.copyCommitMessage",
+          "when": "view == changekeeper.changes && changekeeper.hasSession",
+          "group": "3_report@2"
         }
       ],
       "view/item/context": [
@@ -405,11 +453,43 @@
           "group": "1_session@1"
         }
       ],
-      "diffEditor/gutter/hunk": [
+      "editor/title": [
         {
-          "command": "changekeeper.acceptHunkFromGutter",
-          "when": "diffEditorOriginalUri =~ /^ck-baseline:/",
-          "group": "primary@1"
+          "command": "changekeeper.acceptHunkAtCursor",
+          "when": "isInDiffEditor && diffEditorOriginalUri =~ /^ck-baseline:/",
+          "group": "navigation@1"
+        },
+        {
+          "command": "changekeeper.discardHunkAtCursor",
+          "when": "isInDiffEditor && diffEditorOriginalUri =~ /^ck-baseline:/",
+          "group": "navigation@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "changekeeper.acceptHunkAtCursor",
+          "when": "changekeeper.hasSession && resourceScheme == file && !isInDiffEditor",
+          "group": "changekeeper@1"
+        },
+        {
+          "command": "changekeeper.discardHunkAtCursor",
+          "when": "changekeeper.hasSession && resourceScheme == file && !isInDiffEditor",
+          "group": "changekeeper@2"
+        },
+        {
+          "command": "changekeeper.openDiff",
+          "when": "changekeeper.hasSession && resourceScheme == file && !isInDiffEditor",
+          "group": "changekeeper@3"
+        },
+        {
+          "command": "changekeeper.acceptHunkAtCursor",
+          "when": "isInDiffEditor && diffEditorOriginalUri =~ /^ck-baseline:/",
+          "group": "changekeeper@1"
+        },
+        {
+          "command": "changekeeper.discardHunkAtCursor",
+          "when": "isInDiffEditor && diffEditorOriginalUri =~ /^ck-baseline:/",
+          "group": "changekeeper@2"
         }
       ]
     },

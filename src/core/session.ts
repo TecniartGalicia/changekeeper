@@ -61,13 +61,16 @@ export interface FileChange {
   baselineUnavailable?: string;
   /** the file was touched during the baseline window: the baseline may not be the pre-agent content */
   baselineUncertain?: boolean;
+  /** bytes differ from the baseline but no line does: line endings, BOM or encoding only */
+  eolOnly?: boolean;
   /** hunk id → status; hunks that vanished are removed on recompute */
   hunks: Record<string, HunkStatus>;
   /** ids of hunks that were accepted and later disappeared (kept for the report) */
   archivedAccepted?: number;
   archivedDiscarded?: number;
   /** cached hunk headers for the tree/report (id → summary) */
-  hunkMeta?: Record<string, { header: string; added: number; removed: number; newStart: number; newLines: number }>;
+  /** cached hunk headers for the tree/report (id → summary); firstLine = 0-based current line of the first changed line */
+  hunkMeta?: Record<string, { header: string; added: number; removed: number; newStart: number; newLines: number; firstLine: number }>;
   fileAccepted?: boolean;
   firstSeenAt: string;
   lastChangeAt: string;
@@ -79,7 +82,10 @@ export interface RestoreRecord {
   /** path → sha256 of the bytes that were overwritten ('' = did not exist) */
   before: Record<string, string>;
   paths: string[];
+  /** true when every path was put back */
   undone?: boolean;
+  /** paths already put back (partial undo) */
+  undonePaths?: string[];
 }
 
 export interface Session {
@@ -130,7 +136,11 @@ export function newSession(input: { id: string; folder: string; kind: 'git' | 'p
 
 export function counters(s: Session): SessionCounters {
   const c: SessionCounters = { files: 0, added: 0, modified: 0, deleted: 0, renamed: 0, critical: 0, hunks: 0, pending: 0, accepted: 0, discarded: 0, reviewedFiles: 0 };
+  const renameSources = new Set<string>();
+  for (const f of Object.values(s.changes)) if (f.kind === 'R' && f.renamedFrom) renameSources.add(f.renamedFrom.toLowerCase());
   for (const f of Object.values(s.changes)) {
+    // the deleted half of a rename is not counted twice (it stays listed so it can be restored)
+    if (f.kind === 'D' && renameSources.has(f.path.toLowerCase())) continue;
     c.files++;
     if (f.kind === 'A') c.added++;
     else if (f.kind === 'M') c.modified++;
@@ -163,7 +173,7 @@ export function reconcileHunks(f: FileChange, hunks: Hunk[]): void {
   for (const h of hunks) {
     seen.add(h.id);
     next[h.id] = f.hunks[h.id] ?? (f.fileAccepted ? 'accepted' : 'pending');
-    meta[h.id] = { header: headerOf(h), added: h.added, removed: h.removed, newStart: h.newStart, newLines: h.newLines };
+    meta[h.id] = { header: headerOf(h), added: h.added, removed: h.removed, newStart: h.newStart, newLines: h.newLines, firstLine: firstChangedLine(h) };
   }
   for (const [id, st] of Object.entries(f.hunks)) {
     if (seen.has(id)) continue;
@@ -172,6 +182,16 @@ export function reconcileHunks(f: FileChange, hunks: Hunk[]): void {
   }
   f.hunks = next;
   f.hunkMeta = meta;
+}
+
+/** 0-based line in the *current* text of the first added/removed line (for deletions: the line after them). */
+export function firstChangedLine(h: Hunk): number {
+  let line = h.newLines === 0 ? h.newStart : h.newStart - 1;
+  for (const l of h.lines) {
+    if (l.type !== ' ') return Math.max(0, line);
+    line++;
+  }
+  return Math.max(0, h.newLines === 0 ? h.newStart : h.newStart - 1);
 }
 
 function headerOf(h: Hunk): string {

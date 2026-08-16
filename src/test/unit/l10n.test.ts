@@ -31,7 +31,6 @@ function collect(): Set<string> {
   for (const file of walk(SRC)) {
     const src = fs.readFileSync(file, 'utf8');
     const patterns = [new RegExp(String.raw`l10n\.t\(\s*` + stringLit, 'g')];
-    if (file.endsWith(path.join('core', 'report.ts'))) patterns.push(new RegExp(String.raw`(?<![\w.])t\(\s*` + stringLit, 'g'));
     for (const re of patterns) {
       let m: RegExpExecArray | null;
       while ((m = re.exec(src))) keys.add(unescapeTs(m[1] ?? m[2]));

@@ -150,7 +150,7 @@ describe('engine (git)', function () {
     fs.rmSync(path.join(ctx.repo, 'src', 'new.ts'));
     assert.strictEqual(await e.handlePath('src/new.ts'), undefined);
     const c = e.counters!;
-    assert.strictEqual(c.deleted, 2);
+    assert.strictEqual(c.deleted, 1, 'the deleted half of the rename is not counted twice');
     assert.strictEqual(c.renamed, 1);
   });
 

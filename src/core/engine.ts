@@ -4,8 +4,8 @@ import { computeHunks, discardHunkOnLines, Hunk } from './hunks';
 import { fromRelPosix, gitBlobSha1, newId, pathKey, sha256, toRelPosix } from './paths';
 import { PathRules } from './rules/exclude';
 import { BaselineManifest, BaselineRow, BaselineSource, counters, FileChange, newSession, reconcileHunks, RestoreRecord, Session, SessionCounters } from './session';
-import { planGc, WorkspaceStore } from './store';
-import { decodeText, detectEol, dominantEol, encodeText, joinLines, looksBinary, plainLines, splitLines, TextLine } from './textfile';
+import { planGc, StoreIndex, WorkspaceStore } from './store';
+import { decodeText, detectEol, dominantEol, encodeText, fitsLatin1, joinLines, looksBinary, plainLines, splitLines, TextEncoding, TextLine } from './textfile';
 
 /**
  * The engine: everything ChangeKeeper does to a workspace folder, independent of VS Code.
@@ -28,8 +28,8 @@ export interface FsStat {
 export interface FsAdapter {
   readFile(abs: string): Promise<Buffer | undefined>;
   stat(abs: string): Promise<FsStat | undefined>;
-  /** atomic write, creating parent directories */
-  writeFile(abs: string, data: Buffer): Promise<void>;
+  /** atomic write, creating parent directories; `mode` (e.g. 0o755) is applied on POSIX when given */
+  writeFile(abs: string, data: Buffer, mode?: number): Promise<void>;
   unlink(abs: string): Promise<void>;
   /** yields regular files under root (relative POSIX paths); `skipDir` is asked for each directory (relative POSIX) */
   walk(root: string, skipDir: (relDir: string) => boolean): AsyncIterable<{ rel: string; size: number; mtimeMs: number }>;
@@ -69,7 +69,20 @@ export interface FileView {
   baselineText?: string;
   currentText?: string;
   baselineBom?: boolean;
+  /** how the current bytes decode (utf8 or latin1 round-trip); discards re-encode the same way */
+  encoding?: TextEncoding;
   currentSha: string;
+}
+
+interface CurrentRead {
+  exists: boolean;
+  bytes?: Buffer;
+  text?: string;
+  sha: string;
+  binary?: boolean;
+  tooLarge?: boolean;
+  open: boolean;
+  encoding: TextEncoding;
 }
 
 export interface DiscardPlan {
@@ -93,6 +106,7 @@ export type BaselineResolution =
   | { kind: 'unavailable'; reason: string };
 
 const CAT_MAX_BUFFER = 512 * 1024 * 1024;
+const NUL = String.fromCharCode(0);
 
 export class Engine {
   session: Session | undefined;
@@ -156,7 +170,8 @@ export class Engine {
     await store.ensure();
     const lock = await store.acquireLock(this.pid);
     if (!lock.ok) throw new EngineError('locked', `Folder is guarded by another window (pid ${lock.ownerPid})`);
-    if (this.session && !this.session.stoppedAt) await this.stop();
+    // re-baseline: close the previous session but keep the lock we just (re)acquired
+    if (this.session && !this.session.stoppedAt) await this.stop({ keepLock: true });
     const id = newId(this.now());
     const kind: 'git' | 'plain' = this.isGit ? 'git' : 'plain';
     const session = newSession({ id, folder: this.folder, kind, now: this.now(), agent: opts.agent, label: opts.label });
@@ -174,26 +189,40 @@ export class Engine {
     await store.writeBaselineJson(id, manifest);
     await store.writeMaterialized(id, {});
     await store.writeSessionJson(id, session);
-    const idx = await store.readIndex();
-    idx.folder = this.folder;
-    idx.activeSessionId = id;
-    idx.sessions.push({ id, startedAt: session.startedAt, agent: opts.agent, label: opts.label });
-    await store.writeIndex(idx);
+    await this.withIndex((idx) => {
+      idx.folder = this.folder;
+      idx.activeSessionId = id;
+      idx.sessions.push({ id, startedAt: session.startedAt, agent: opts.agent, label: opts.label });
+    });
     this.deps.onChanged?.();
     return session;
   }
 
-  async stop(): Promise<void> {
+  async stop(opts: { keepLock?: boolean } = {}): Promise<void> {
     if (!this.session) return;
     if (!this.session.stoppedAt) this.session.stoppedAt = this.now().toISOString();
     await this.flush();
-    const idx = await this.deps.store.readIndex();
-    const meta = idx.sessions.find((s) => s.id === this.session!.id);
-    if (meta) meta.stoppedAt = this.session.stoppedAt;
-    if (idx.activeSessionId === this.session.id) idx.activeSessionId = undefined;
-    await this.deps.store.writeIndex(idx);
-    await this.deps.store.releaseLock(this.pid);
+    await this.withIndex(async (idx) => {
+      const meta = idx.sessions.find((s) => s.id === this.session!.id);
+      if (meta) meta.stoppedAt = this.session!.stoppedAt;
+      if (idx.activeSessionId === this.session!.id) idx.activeSessionId = undefined;
+    });
+    if (!opts.keepLock) await this.deps.store.releaseLock(this.pid);
     this.deps.onChanged?.();
+  }
+
+  private indexChain: Promise<unknown> = Promise.resolve();
+  /** Serialised read-modify-write of index.json (start/stop/gc must not interleave). */
+  private withIndex<T>(fn: (idx: StoreIndex) => Promise<T> | T): Promise<T> {
+    const run = async () => {
+      const idx = await this.deps.store.readIndex();
+      const r = await fn(idx);
+      await this.deps.store.writeIndex(idx);
+      return r;
+    };
+    const p = this.indexChain.then(run, run);
+    this.indexChain = p.catch(() => undefined);
+    return p;
   }
 
   /** Forgets the in-memory session (window closing) without stopping it on disk. */
@@ -244,23 +273,40 @@ export class Engine {
   private async buildGitBaseline(manifest: BaselineManifest, opts: { progress?: (msg: string) => void; cancelled?: () => boolean }): Promise<void> {
     const git = this.deps.git!;
     const limits = this.deps.limits;
-    opts.progress?.('Reading git index…');
+    opts.progress?.('index');
     const head = await git.run(['rev-parse', 'HEAD']);
     manifest.head = parseHead(head.stdout.toString('utf8'));
-    const ls = await git.run(['ls-files', '-s', '-z', '--recurse-submodules'], { maxBuffer: 256 * 1024 * 1024 });
+    // 1) gitlinks (submodule roots) — their files live in another object database; we cannot materialise them
+    const lsTop = await git.run(['ls-files', '-s', '-z'], { maxBuffer: 256 * 1024 * 1024 });
+    if (lsTop.code !== 0) throw new EngineError('git', `git ls-files failed: ${lsTop.stderr.trim()}`);
+    const submodules: string[] = [];
+    for (const e of parseLsFilesStage(lsTop.stdout)) if (e.mode === '160000') submodules.push(e.path + '/');
+    const inSubmodule = (p: string) => submodules.some((s) => p.startsWith(s));
+    // 2) every tracked file (recursing into submodules so nothing inside them looks "new" later)
+    const ls = submodules.length ? await git.run(['ls-files', '-s', '-z', '--recurse-submodules'], { maxBuffer: 256 * 1024 * 1024 }) : lsTop;
     if (ls.code !== 0) throw new EngineError('git', `git ls-files failed: ${ls.stderr.trim()}`);
     const rows = new Map<string, BaselineRow>();
     const unmerged = new Set<string>();
     for (const e of parseLsFilesStage(ls.stdout)) {
-      if (e.mode === '160000') continue; // gitlink: submodule root, its files are listed by --recurse-submodules
+      if (e.mode === '160000') continue;
       if (e.stage !== 0) {
         unmerged.add(e.path);
         continue;
       }
+      if (inSubmodule(e.path)) {
+        rows.set(pathKey(e.path), [e.path, 'unavailable', 'submodule', e.mode]);
+        continue;
+      }
+      if (e.mode === '120000') {
+        rows.set(pathKey(e.path), [e.path, 'unavailable', 'symlink', e.mode]);
+        continue;
+      }
       rows.set(pathKey(e.path), [e.path, 'git-blob', e.oid, e.mode]);
     }
-    opts.progress?.('Reading working tree status…');
-    const st1 = await git.run(['status', '--porcelain=v2', '-z', '--untracked-files=all', '--no-renames', '--', '.'], { maxBuffer: 256 * 1024 * 1024 });
+    // 3) working tree status: dirty and untracked files are copied; ignored files only when critical
+    opts.progress?.('status');
+    const statusArgs = ['status', '--porcelain=v2', '-z', '--untracked-files=all', '--ignored=matching', '--no-renames', '--', '.'];
+    const st1 = await git.run(statusArgs, { maxBuffer: 256 * 1024 * 1024 });
     if (st1.code !== 0) throw new EngineError('git', `git status failed: ${st1.stderr.trim()}`);
     const first = this.localStatus(parseStatusV2(st1.stdout));
     let copied = 0;
@@ -268,7 +314,13 @@ export class Engine {
     let skipped = 0;
     const toCopy: string[] = [];
     for (const e of first) {
-      if (e.kind === 'ignored') continue;
+      if (inSubmodule(e.path)) continue;
+      if (e.kind === 'ignored') {
+        // `--ignored=matching` lists ignored files (and whole ignored dirs with a trailing slash)
+        if (e.path.endsWith('/')) continue;
+        if (this.deps.rules.isCritical(e.path)) toCopy.push(e.path);
+        continue;
+      }
       if (e.kind === 'untracked') {
         const d = this.deps.rules.decide(e.path, false);
         if (!d.watch) continue;
@@ -279,24 +331,26 @@ export class Engine {
         toCopy.push(e.path);
         continue;
       }
-      // changed
-      if (e.y === 'D') {
-        rows.set(pathKey(e.path), [e.path, 'missing', '', '']);
-      } else if (e.y !== '.') {
-        toCopy.push(e.path);
-      } else if (e.x !== '.' && e.indexOid) {
-        // index differs from HEAD, working tree equals index → the index blob is right (already in rows)
-      }
+      // changed (tracked)
+      if (e.y === 'D') rows.set(pathKey(e.path), [e.path, 'missing', '', '']);
+      else if (e.y !== '.') toCopy.push(e.path);
+      // else: only the index differs from HEAD; the working tree equals the index blob already in rows
     }
-    for (const p of unmerged) if (!toCopy.includes(p)) toCopy.push(p);
+    for (const p of unmerged) if (!toCopy.includes(p) && !inSubmodule(p)) toCopy.push(p);
+    // 4) copy, remembering size/mtime so a write during the copy window can be detected
+    const copiedStat = new Map<string, { size: number; mtimeMs: number }>();
     let n = 0;
     for (const rel of toCopy) {
       if (opts.cancelled?.()) throw new EngineError('cancelled', 'cancelled');
-      if (++n % 50 === 0) opts.progress?.(`Copying baseline of modified files… ${n}/${toCopy.length}`);
+      if (++n % 50 === 0) opts.progress?.(`copy ${n}/${toCopy.length}`);
       const abs = fromRelPosix(this.folder, rel);
       const stat = await this.deps.fs.stat(abs);
       if (!stat || !stat.isFile) {
         rows.set(pathKey(rel), [rel, 'missing', '', '']);
+        continue;
+      }
+      if (stat.isSymbolicLink) {
+        rows.set(pathKey(rel), [rel, 'unavailable', 'symlink', '']);
         continue;
       }
       if (stat.size > limits.maxFileBytes) {
@@ -316,15 +370,16 @@ export class Engine {
       }
       const sha = await this.deps.store.putBlob(buf);
       rows.set(pathKey(rel), [rel, 'store', sha, '']);
+      copiedStat.set(rel, { size: buf.length, mtimeMs: stat.mtimeMs });
       copied++;
       copiedBytes += buf.length;
     }
-    // Second status: anything that changed while we were copying is uncertain.
-    const st2 = await git.run(['status', '--porcelain=v2', '-z', '--untracked-files=all', '--no-renames', '--', '.'], { maxBuffer: 256 * 1024 * 1024 });
+    // 5) second status + re-stat: anything that moved while we were working is uncertain
+    const st2 = await git.run(statusArgs, { maxBuffer: 256 * 1024 * 1024 });
     if (st2.code === 0) {
       const firstSet = new Set(first.map((e) => `${e.kind}:${e.x}${e.y}:${e.path}`));
       for (const e of this.localStatus(parseStatusV2(st2.stdout))) {
-        if (e.kind === 'ignored') continue;
+        if (e.kind === 'ignored' || inSubmodule(e.path)) continue;
         const key = `${e.kind}:${e.x}${e.y}:${e.path}`;
         if (!firstSet.has(key)) {
           const cur = rows.get(pathKey(e.path));
@@ -333,9 +388,16 @@ export class Engine {
         }
       }
     }
+    for (const [rel, s0] of copiedStat) {
+      const s1 = await this.deps.fs.stat(fromRelPosix(this.folder, rel));
+      if (!s1 || s1.size !== s0.size || s1.mtimeMs !== s0.mtimeMs) {
+        const cur = rows.get(pathKey(rel));
+        if (cur && cur[1] === 'store') rows.set(pathKey(rel), [rel, 'uncertain', cur[2], 'store']);
+      }
+    }
     manifest.rows = [...rows.values()];
     manifest.skipped = skipped;
-    this.log(`git baseline: ${manifest.rows.length} rows, ${copied} copied (${copiedBytes} bytes), ${skipped} skipped`);
+    this.log(`git baseline: ${manifest.rows.length} rows, ${copied} copied (${copiedBytes} bytes), ${skipped} skipped, ${submodules.length} submodule(s)`);
   }
 
   /** Status entries trimmed to the folder (drops entries outside it, rewrites paths). */
@@ -356,9 +418,10 @@ export class Engine {
     let skipped = 0;
     let n = 0;
     const rows: BaselineRow[] = [];
-    for await (const f of this.deps.fs.walk(this.folder, (dir) => !this.deps.rules.decide(dir + '/x', false).watch && !this.deps.rules.isCritical(dir + '/x'))) {
+    // hard/heavy dirs are skipped; other excluded dirs are walked because critical files may live inside
+    for await (const f of this.deps.fs.walk(this.folder, (dir) => this.deps.rules.skipDir(dir))) {
       if (opts.cancelled?.()) throw new EngineError('cancelled', 'cancelled');
-      if (++n % 200 === 0) opts.progress?.(`Copying baseline… ${n} files`);
+      if (++n % 200 === 0) opts.progress?.(`copy ${n}`);
       const d = this.deps.rules.decide(f.rel, false);
       if (!d.watch) continue;
       if (f.size > limits.maxFileBytes) {
@@ -405,42 +468,63 @@ export class Engine {
     if (source === 'uncertain' && row[3] !== 'git-blob') return { kind: 'unavailable', reason: 'uncertain' };
     // git-blob (or uncertain over a git-blob): materialise by the OID captured at session start
     const mat = this.materialized[rel];
-    if (mat) {
+    if (mat && !mat.startsWith('!')) {
       const bytes = await this.deps.store.getBlob(mat);
       if (bytes) return { kind: 'bytes', bytes, sha: mat };
     }
     if (!ref) return { kind: 'unavailable', reason: 'uncertain' };
-    const res = await this.materialize(rel, ref);
-    return res;
+    return this.materialize(rel, ref);
   }
 
   private async materialize(rel: string, oid: string): Promise<BaselineResolution> {
     const git = this.deps.git;
     if (!git) return { kind: 'unavailable', reason: 'no-git' };
+    // negative results are cached per session ("!reason") so we do not spawn git again for the same file
+    const cached = this.materialized[rel];
+    if (cached && cached.startsWith('!')) return { kind: 'unavailable', reason: cached.slice(1) };
+    const negative = (reason: string): BaselineResolution => {
+      this.materialized[rel] = '!' + reason;
+      this.materializedDirty = true;
+      this.schedulePersist();
+      return { kind: 'unavailable', reason };
+    };
     // LFS pointers: never smudge (may hit the network); such files have no text baseline
     const attr = await git.run(['check-attr', 'filter', '-z', '--stdin'], { stdin: Buffer.from(rel + '\0') });
     if (attr.code === 0) {
       const a = parseCheckAttr(attr.stdout).get(rel);
-      if (a && a.filter && a.filter !== 'unspecified' && a.filter !== 'unset') return { kind: 'unavailable', reason: `filter:${a.filter}` };
+      if (a && a.filter && a.filter !== 'unspecified' && a.filter !== 'unset') return negative(`filter:${a.filter}`);
     }
-    const out = await git.run(['cat-file', '--batch', '--filters'], { stdin: Buffer.from(`${oid} ${rel}\n`), maxBuffer: CAT_MAX_BUFFER });
-    const rec = parseCatFileSingle(out.stdout);
+    // size gate before reading the object (a tracked 300 MB binary must not be pulled into memory)
+    const check = await git.run(['cat-file', '--batch-check'], { stdin: Buffer.from(`${oid}\n`) });
+    const header = check.stdout.toString('utf8').trim().split(' ');
+    if (header[1] === 'missing') return negative('blob-missing');
+    const size = Number(header[2]);
+    if (Number.isFinite(size) && size > this.deps.limits.maxFileBytes) return negative('large');
+    // path for attribute lookup is repo-root-relative (cat-file resolves it against the work tree root)
+    const attrPath = (this.deps.gitPrefix ?? '') + rel;
+    const out = await git.run(['cat-file', '--batch', '--filters'], { stdin: Buffer.from(`${oid} ${attrPath}\n`), maxBuffer: CAT_MAX_BUFFER });
+    let rec = parseCatFileSingle(out.stdout);
     if (!rec || !rec.content) {
       // fall back to the raw blob (e.g. path-dependent filters could not be resolved)
       const raw = await git.run(['cat-file', '--batch'], { stdin: Buffer.from(`${oid}\n`), maxBuffer: CAT_MAX_BUFFER });
-      const r2 = parseCatFileSingle(raw.stdout);
-      if (!r2 || !r2.content) return { kind: 'unavailable', reason: 'blob-missing' };
-      const sha = await this.deps.store.putBlob(r2.content);
-      this.materialized[rel] = sha;
-      this.materializedDirty = true;
-      this.schedulePersist();
-      return { kind: 'bytes', bytes: r2.content, sha };
+      rec = parseCatFileSingle(raw.stdout);
+      if (!rec || !rec.content) return negative('blob-missing');
     }
     const sha = await this.deps.store.putBlob(rec.content);
     this.materialized[rel] = sha;
     this.materializedDirty = true;
     this.schedulePersist();
     return { kind: 'bytes', bytes: rec.content, sha };
+  }
+
+  /** Baseline sha without reading bytes when it is already known (store rows, materialised blobs). */
+  private knownBaselineSha(rel: string): string | undefined {
+    const row = this.baselineRow(rel);
+    if (!row) return undefined;
+    if (row[1] === 'store' || (row[1] === 'uncertain' && row[3] === 'store')) return row[2];
+    const mat = this.materialized[rel];
+    if (mat && !mat.startsWith('!')) return mat;
+    return undefined;
   }
 
   // ------------------------------------------------------------------------------------------
@@ -471,11 +555,45 @@ export class Engine {
   private async isGitIgnored(rel: string): Promise<boolean> {
     if (!this.deps.git) return false;
     try {
-      const out = await this.deps.git.run(['check-ignore', '--stdin', '-z'], { stdin: Buffer.from(rel + '\0') });
+      const out = await this.deps.git.run(['check-ignore', '--stdin', '-z'], { stdin: Buffer.from(rel + NUL) });
       return parseCheckIgnore(out.stdout).has(rel);
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Resolves the ignore decision of many paths in ONE git process (a spawn per path costs ~15 ms on
+   * Windows). Paths already decided, tracked at baseline, or settled by rules are skipped.
+   */
+  async prefetchIgnore(rels: readonly string[]): Promise<void> {
+    if (!this.deps.git) return;
+    const ask: string[] = [];
+    for (const rel of rels) {
+      const k = pathKey(rel);
+      if (this.ignoreCache.has(k) || this.baselineRow(rel)) continue;
+      const d0 = this.deps.rules.decide(rel, false);
+      if (!d0.watch || d0.critical) continue;
+      ask.push(rel);
+    }
+    if (!ask.length) return;
+    try {
+      const out = await this.deps.git.run(['check-ignore', '--stdin', '-z'], { stdin: Buffer.from(ask.join(NUL) + NUL), maxBuffer: 64 * 1024 * 1024 });
+      const ignored = parseCheckIgnore(out.stdout);
+      for (const rel of ask) this.ignoreCache.set(pathKey(rel), ignored.has(rel));
+    } catch {
+      /* fall back to per-path checks */
+    }
+  }
+
+  /** Paths (baseline rows and current changes) below a directory — used when a directory is moved or removed. */
+  knownPathsUnder(relDir: string): string[] {
+    const prefix = relDir.endsWith('/') ? relDir : relDir + '/';
+    const pk = pathKey(prefix);
+    const out = new Set<string>();
+    for (const row of this.baseline?.rows ?? []) if (pathKey(row[0]).startsWith(pk)) out.add(row[0]);
+    for (const c of this.changes()) if (pathKey(c.path).startsWith(pk)) out.add(c.path);
+    return [...out];
   }
 
   /**
@@ -525,60 +643,46 @@ export class Engine {
       if (!session.notes.includes('max-files')) session.notes.push('max-files');
       return undefined;
     }
-    // suppression of our own writes
     const abs = fromRelPosix(this.folder, rel);
     const current = await this.readCurrent(rel, abs);
-    const ourSha = this.writingOurselves.get(k);
-    if (ourSha !== undefined && current.sha === ourSha) {
-      this.writingOurselves.delete(k);
-    }
+    if (this.writingOurselves.get(k) === current.sha) this.writingOurselves.delete(k);
     const nowIso = this.now().toISOString();
     const row = this.baselineRow(rel);
     // Fast path: a clean tracked file re-saved with identical bytes matches its index blob without
-    // materialising anything (only when the OID is SHA-1 and no working-tree filter applies is this exact;
-    // otherwise we fall through and compare against the materialised bytes).
+    // materialising anything (exact only for SHA-1 OIDs; otherwise we fall through to the byte comparison).
     if (current.exists && current.bytes && row && row[1] === 'git-blob' && row[2].length === 40 && !this.materialized[rel] && gitBlobSha1(current.bytes) === row[2]) {
-      if (existing) {
-        delete session.changes[k];
-        this.viewCache.delete(k);
-        this.schedulePersist();
-      }
-      return undefined;
+      return this.dropChange(k, existing);
     }
     const base = await this.resolveBaseline(rel);
     const uncertain = row?.[1] === 'uncertain';
+    // A file whose content moved on since the user pressed "accept file" is not reviewed any more.
+    if (existing && existing.currentSha !== undefined && existing.currentSha !== current.sha) existing.fileAccepted = false;
     // ---- deleted now
     if (!current.exists) {
-      if (base.kind === 'none') {
-        if (existing) {
-          delete session.changes[k];
-          this.viewCache.delete(k);
-          this.schedulePersist();
-        }
-        return undefined;
-      }
+      if (base.kind === 'none') return this.dropChange(k, existing);
       const ch: FileChange = existing ?? { path: rel, kind: 'D', critical: w.critical, hunks: {}, firstSeenAt: nowIso, lastChangeAt: nowIso };
       ch.kind = 'D';
       ch.currentSha = '';
       ch.lastChangeAt = nowIso;
       ch.baselineUnavailable = base.kind === 'unavailable' ? base.reason : undefined;
-      ch.hunks = {};
-      ch.hunkMeta = {};
+      ch.eolOnly = undefined;
+      reconcileHunks(ch, []);
+      // symmetric rename detection: an added file with these baseline bytes becomes a rename of this one
+      if (base.kind === 'bytes') {
+        for (const other of Object.values(session.changes)) {
+          if (other.kind === 'A' && other.currentSha === base.sha) {
+            other.kind = 'R';
+            other.renamedFrom = rel;
+          }
+        }
+      }
       session.changes[k] = ch;
       this.viewCache.delete(k);
       this.schedulePersist();
       return ch;
     }
     // ---- exists now
-    if (base.kind === 'bytes' && current.sha === base.sha) {
-      // equal to baseline → not a change any more
-      if (existing) {
-        delete session.changes[k];
-        this.viewCache.delete(k);
-        this.schedulePersist();
-      }
-      return undefined;
-    }
+    if (base.kind === 'bytes' && current.sha === base.sha) return this.dropChange(k, existing);
     const ch: FileChange = existing ?? { path: rel, kind: 'A', critical: w.critical, hunks: {}, firstSeenAt: nowIso, lastChangeAt: nowIso };
     ch.path = rel;
     ch.critical = w.critical;
@@ -588,6 +692,7 @@ export class Engine {
     ch.tooLarge = current.tooLarge;
     ch.baselineUnavailable = base.kind === 'unavailable' ? base.reason : undefined;
     ch.baselineUncertain = uncertain || undefined;
+    ch.eolOnly = undefined;
     if (base.kind === 'none') {
       // new file; a rename when a deleted file has exactly these bytes as baseline
       const renamedFrom = await this.findDeletedTwin(current.sha, rel);
@@ -609,11 +714,12 @@ export class Engine {
       const baseLines = splitLines(bt.text);
       const curLines = splitLines(current.text);
       hunks = computeHunks(plainLines(baseLines), plainLines(curLines));
-      this.viewCache.set(k, { change: ch, hunks, baselineText: bt.text, currentText: current.text, baselineBom: bt.bom, currentSha: current.sha });
+      if (hunks.length === 0) ch.eolOnly = true; // bytes differ but no line differs: EOL / BOM / encoding only
+      this.viewCache.set(k, { change: ch, hunks, baselineText: bt.text, currentText: current.text, baselineBom: bt.bom, encoding: current.encoding, currentSha: current.sha });
     } else if (base.kind === 'none' && !current.binary && !current.tooLarge && current.text !== undefined) {
       const curLines = splitLines(current.text);
       hunks = computeHunks([], plainLines(curLines));
-      this.viewCache.set(k, { change: ch, hunks, baselineText: '', currentText: current.text, baselineBom: false, currentSha: current.sha });
+      this.viewCache.set(k, { change: ch, hunks, baselineText: '', currentText: current.text, baselineBom: false, encoding: current.encoding, currentSha: current.sha });
     } else {
       this.viewCache.set(k, { change: ch, currentSha: current.sha });
     }
@@ -623,37 +729,69 @@ export class Engine {
     return ch;
   }
 
+  private dropChange(k: string, existing: FileChange | undefined): undefined {
+    if (existing) {
+      // a rename whose source reappears is a plain addition again
+      if (existing.kind === 'D' && this.session) {
+        for (const other of Object.values(this.session.changes)) {
+          if (other.kind === 'R' && other.renamedFrom && pathKey(other.renamedFrom) === k) {
+            other.kind = 'A';
+            other.renamedFrom = undefined;
+          }
+        }
+      }
+      delete this.session!.changes[k];
+      this.viewCache.delete(k);
+      this.schedulePersist();
+    }
+    return undefined;
+  }
+
   private async findDeletedTwin(sha: string, rel: string): Promise<string | undefined> {
     if (!this.session) return undefined;
     for (const c of Object.values(this.session.changes)) {
       if (c.kind !== 'D' || pathKey(c.path) === pathKey(rel)) continue;
+      const known = this.knownBaselineSha(c.path);
+      if (known !== undefined) {
+        if (known === sha) return c.path;
+        continue;
+      }
       const b = await this.resolveBaseline(c.path);
       if (b.kind === 'bytes' && b.sha === sha) return c.path;
     }
     return undefined;
   }
 
-  private async readCurrent(rel: string, abs: string): Promise<{ exists: boolean; bytes?: Buffer; text?: string; sha: string; binary?: boolean; tooLarge?: boolean; open: boolean }> {
+  private async readCurrent(rel: string, abs: string): Promise<CurrentRead> {
     const doc = this.deps.openDoc(rel);
     if (doc) {
-      // Documents are text by definition; keep BOM if the disk file has one so hashes line up.
-      let bom = false;
+      // The editor buffer is the truth for open documents. Encode it the way the disk file is encoded
+      // (BOM / latin1 round-trip) so hashes line up with disk and baseline bytes.
       const disk = await this.deps.fs.readFile(abs);
-      if (disk && disk.length >= 3 && disk[0] === 0xef && disk[1] === 0xbb && disk[2] === 0xbf) bom = true;
-      const bytes = encodeText(doc.text, bom);
-      return { exists: true, bytes, text: doc.text, sha: sha256(bytes), open: true, tooLarge: bytes.length > this.deps.limits.maxFileBytes };
+      if (!disk && !doc.dirty) return { exists: false, sha: '', open: true, encoding: 'utf8' }; // deleted on disk, clean buffer → deleted
+      let bom = false;
+      let encoding: TextEncoding = 'utf8';
+      if (disk) {
+        const d = decodeText(disk);
+        bom = d.bom;
+        encoding = d.encoding;
+        if (encoding === 'latin1' && !fitsLatin1(doc.text)) encoding = 'utf8';
+      }
+      const bytes = encodeText(doc.text, bom, encoding);
+      return { exists: true, bytes, text: doc.text, sha: sha256(bytes), open: true, encoding, tooLarge: bytes.length > this.deps.limits.maxFileBytes };
     }
     const stat = await this.deps.fs.stat(abs);
-    if (!stat || !stat.isFile) return { exists: false, sha: '', open: false };
+    if (!stat || !stat.isFile) return { exists: false, sha: '', open: false, encoding: 'utf8' };
     if (stat.size > this.deps.limits.maxFileBytes) {
       // hash it anyway (streaming would be nicer; files this size are rare)
       const big = await this.deps.fs.readFile(abs);
-      return { exists: true, sha: big ? sha256(big) : `size:${stat.size}:${stat.mtimeMs}`, tooLarge: true, open: false };
+      return { exists: true, sha: big ? sha256(big) : `size:${stat.size}:${stat.mtimeMs}`, tooLarge: true, open: false, encoding: 'utf8' };
     }
     const bytes = await this.deps.fs.readFile(abs);
-    if (!bytes) return { exists: false, sha: '', open: false };
-    if (looksBinary(bytes)) return { exists: true, bytes, sha: sha256(bytes), binary: true, open: false };
-    return { exists: true, bytes, text: decodeText(bytes).text, sha: sha256(bytes), open: false };
+    if (!bytes) return { exists: false, sha: '', open: false, encoding: 'utf8' };
+    if (looksBinary(bytes)) return { exists: true, bytes, sha: sha256(bytes), binary: true, open: false, encoding: 'utf8' };
+    const d = decodeText(bytes);
+    return { exists: true, bytes, text: d.text, sha: sha256(bytes), open: false, encoding: d.encoding };
   }
 
   /** Drains the burst queue after the user chose to track the paths. */
@@ -666,6 +804,7 @@ export class Engine {
       this.schedulePersist();
       return 0;
     }
+    await this.prefetchIgnore(q);
     let n = 0;
     for (const rel of q) {
       await this.handlePath(rel, { fromBurstQueue: true });
@@ -747,7 +886,10 @@ export class Engine {
       replacement = joinLines([out[startLine - 1]]) + replacement;
     }
     const newText = joinLines(out);
-    const diskBom = await this.currentHasBom(rel);
+    // re-encode exactly like the current bytes decode (BOM kept, latin1 round-trip) so nothing outside the hunk changes
+    const disk = await this.deps.fs.readFile(fromRelPosix(this.folder, rel));
+    const diskInfo = disk ? decodeText(disk) : { bom: false, encoding: v.encoding ?? 'utf8' };
+    const encoding: TextEncoding = diskInfo.encoding === 'latin1' && fitsLatin1(newText) ? 'latin1' : 'utf8';
     return {
       ok: true,
       rel,
@@ -755,24 +897,27 @@ export class Engine {
       endLine,
       replacement,
       newText,
-      newBytes: encodeText(newText, diskBom),
+      newBytes: encodeText(newText, diskInfo.bom, encoding),
       currentSha: v.currentSha,
       isOpen: this.deps.openDoc(rel) !== undefined,
     };
   }
 
-  private async currentHasBom(rel: string): Promise<boolean> {
-    const buf = await this.deps.fs.readFile(fromRelPosix(this.folder, rel));
-    return !!buf && buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf;
-  }
-
   /** Writes a discard plan to disk (closed documents). Marks the hunk discarded. */
-  async applyDiscardToDisk(plan: DiscardPlan, hunkId: string): Promise<void> {
+  async applyDiscardToDisk(plan: DiscardPlan, hunkId: string): Promise<{ ok: boolean; reason?: 'stale' }> {
     const k = pathKey(plan.rel);
+    const abs = fromRelPosix(this.folder, plan.rel);
+    // the file may have moved on between planning and applying (the agent keeps writing)
+    const now = await this.readCurrent(plan.rel, abs);
+    if (!now.exists || now.sha !== plan.currentSha) {
+      await this.handlePath(plan.rel);
+      return { ok: false, reason: 'stale' };
+    }
     this.writingOurselves.set(k, sha256(plan.newBytes));
-    await this.deps.fs.writeFile(fromRelPosix(this.folder, plan.rel), plan.newBytes);
+    await this.deps.fs.writeFile(abs, plan.newBytes);
     this.markDiscarded(plan.rel, hunkId);
     await this.handlePath(plan.rel);
+    return { ok: true };
   }
 
   /** After the VS Code layer applied the plan through WorkspaceEdit. */
@@ -820,7 +965,8 @@ export class Engine {
           results.push({ rel, status: 'deleted' });
         } else {
           this.writingOurselves.set(pathKey(rel), base.sha);
-          await this.deps.fs.writeFile(abs, base.bytes);
+          const row = this.baselineRow(rel);
+          await this.deps.fs.writeFile(abs, base.bytes, row && row[3] === '100755' ? 0o755 : undefined);
           results.push({ rel, status: 'restored' });
         }
         done.push(rel);
@@ -844,7 +990,11 @@ export class Engine {
 
   lastUndoableRestore(): RestoreRecord | undefined {
     if (!this.session) return undefined;
-    for (let i = this.session.restores.length - 1; i >= 0; i--) if (!this.session.restores[i].undone) return this.session.restores[i];
+    for (let i = this.session.restores.length - 1; i >= 0; i--) {
+      const r = this.session.restores[i];
+      if (r.undone) continue;
+      if (r.paths.some((p) => !(r.undonePaths ?? []).includes(p))) return r;
+    }
     return undefined;
   }
 
@@ -855,7 +1005,9 @@ export class Engine {
   async undoRestore(record: RestoreRecord, force = false): Promise<{ rel: string; status: 'undone' | 'skipped'; reason?: string }[]> {
     const out: { rel: string; status: 'undone' | 'skipped'; reason?: string }[] = [];
     if (!this.session) return out;
+    const undonePaths = new Set(record.undonePaths ?? []);
     for (const rel of record.paths) {
+      if (undonePaths.has(rel)) continue;
       const abs = fromRelPosix(this.folder, rel);
       const cur = await this.deps.fs.readFile(abs);
       const base = await this.resolveBaseline(rel);
@@ -882,13 +1034,15 @@ export class Engine {
           await this.deps.fs.writeFile(abs, bytes);
         }
         out.push({ rel, status: 'undone' });
+        undonePaths.add(rel);
         await this.handlePath(rel);
       } catch (e: any) {
         out.push({ rel, status: 'skipped', reason: e?.message ?? String(e) });
       }
     }
     if (out.some((r) => r.status === 'undone')) {
-      record.undone = out.every((r) => r.status === 'undone');
+      record.undonePaths = [...undonePaths];
+      record.undone = record.paths.every((p) => undonePaths.has(p));
       this.schedulePersist();
     }
     return out;
@@ -903,36 +1057,49 @@ export class Engine {
     if (!this.session || !this.baseline) return 0;
     const candidates = new Set<string>();
     for (const c of Object.values(this.session.changes)) candidates.add(c.path);
+    // rows that were copied/absent/uncertain at start cannot be compared by OID: re-check them all (bounded by the copy limits)
+    for (const row of this.baseline.rows) if (row[1] !== 'git-blob') candidates.add(row[0]);
     if (this.deps.git) {
-      progress?.('Comparing git index…');
+      progress?.('index');
       const ls = await this.deps.git.run(['ls-files', '-s', '-z', '--recurse-submodules'], { maxBuffer: 256 * 1024 * 1024 });
-      const nowIdx = new Map<string, string>();
-      for (const e of parseLsFilesStage(ls.stdout)) if (e.mode !== '160000') nowIdx.set(pathKey(e.path), e.oid);
+      if (ls.code !== 0) throw new EngineError('git', `git ls-files failed: ${ls.stderr.trim()}`);
+      const nowIdx = new Map<string, { oid: string; path: string }>();
+      for (const e of parseLsFilesStage(ls.stdout)) if (e.mode !== '160000') nowIdx.set(pathKey(e.path), { oid: e.oid, path: e.path });
       for (const row of this.baseline.rows) {
-        const oid = nowIdx.get(pathKey(row[0]));
-        if (row[1] === 'git-blob' && oid !== row[2]) candidates.add(row[0]);
+        if (row[1] !== 'git-blob') continue;
+        const now = nowIdx.get(pathKey(row[0]));
+        if (!now || now.oid !== row[2]) candidates.add(row[0]);
       }
-      for (const [k, oid] of nowIdx) {
+      for (const [k, e] of nowIdx) {
         const row = this.baselineRows.get(k);
-        if (!row || (row[1] === 'git-blob' && row[2] !== oid)) candidates.add(k);
+        if (!row) candidates.add(e.path);
       }
-      const st = await this.deps.git.run(['status', '--porcelain=v2', '-z', '--untracked-files=all', '--no-renames', '--', '.'], { maxBuffer: 256 * 1024 * 1024 });
-      for (const e of this.localStatus(parseStatusV2(st.stdout))) if (e.kind !== 'ignored') candidates.add(e.path);
+      const st = await this.deps.git.run(['status', '--porcelain=v2', '-z', '--untracked-files=all', '--ignored=matching', '--no-renames', '--', '.'], { maxBuffer: 256 * 1024 * 1024 });
+      if (st.code !== 0) throw new EngineError('git', `git status failed: ${st.stderr.trim()}`);
+      for (const e of this.localStatus(parseStatusV2(st.stdout))) {
+        if (e.kind === 'ignored') {
+          if (!e.path.endsWith('/') && this.deps.rules.isCritical(e.path)) candidates.add(e.path);
+          continue;
+        }
+        candidates.add(e.path);
+      }
     } else {
-      progress?.('Scanning folder…');
+      progress?.('scan');
       const seen = new Set<string>();
-      for await (const f of this.deps.fs.walk(this.folder, (dir) => !this.deps.rules.decide(dir + '/x', false).watch && !this.deps.rules.isCritical(dir + '/x'))) {
+      for await (const f of this.deps.fs.walk(this.folder, (dir) => this.deps.rules.skipDir(dir))) {
         seen.add(pathKey(f.rel));
         candidates.add(f.rel);
       }
       for (const row of this.baseline.rows) if (!seen.has(pathKey(row[0]))) candidates.add(row[0]);
     }
+    const list = [...candidates];
+    await this.prefetchIgnore(list);
     let n = 0;
-    for (const rel of candidates) {
-      if (++n % 100 === 0) progress?.(`Re-checking ${n}/${candidates.size}…`);
+    for (const rel of list) {
+      if (++n % 100 === 0) progress?.(`recheck ${n}/${list.length}`);
       await this.handlePath(rel, { fromBurstQueue: true });
     }
-    return candidates.size;
+    return list.length;
   }
 
   // ------------------------------------------------------------------------------------------
@@ -941,14 +1108,14 @@ export class Engine {
 
   async gc(retentionDays: number, maxBytes: number): Promise<{ droppedSessions: number; deletedBlobs: number }> {
     const store = this.deps.store;
-    const idx = await store.readIndex();
+    const idx0 = await store.readIndex();
     const sessions: { id: string; startedAt: string; stoppedAt?: string; blobRefs: string[] }[] = [];
-    for (const meta of idx.sessions) {
+    for (const meta of idx0.sessions) {
       const refs: string[] = [];
       const b = await store.readBaselineJson<BaselineManifest>(meta.id);
-      if (b) for (const r of b.rows) if (r[1] === 'store') refs.push(r[2]);
+      if (b) for (const r of b.rows) if (r[1] === 'store' || (r[1] === 'uncertain' && r[3] === 'store')) refs.push(r[2]);
       const m = await store.readMaterialized(meta.id);
-      refs.push(...Object.values(m));
+      for (const v of Object.values(m)) if (!v.startsWith('!')) refs.push(v);
       const s = await store.readSessionJson<Session>(meta.id);
       if (s) for (const r of s.restores) for (const sha of Object.values(r.before)) if (sha) refs.push(sha);
       sessions.push({ id: meta.id, startedAt: meta.startedAt, stoppedAt: meta.stoppedAt, blobRefs: refs });
@@ -956,20 +1123,29 @@ export class Engine {
     const blobs = await store.listBlobs();
     const blobSizes: Record<string, number> = {};
     for (const b of blobs) blobSizes[b.sha] = b.size;
-    const plan = planGc({ now: this.now().getTime(), retentionDays, maxBytes, activeSessionId: idx.activeSessionId, sessions, blobSizes });
-    for (const id of plan.dropSessions) await store.deleteSessionFiles(id);
-    idx.sessions = idx.sessions.filter((s) => !plan.dropSessions.includes(s.id));
-    await store.writeIndex(idx);
-    // never delete a blob younger than 10 minutes: it may belong to a session being written right now
+    // the active session may have changed while we were reading: decide against the freshest index and never drop it
+    const activeNow = (await store.readIndex()).activeSessionId ?? this.session?.id;
+    const plan = planGc({ now: this.now().getTime(), retentionDays, maxBytes, activeSessionId: activeNow, sessions, blobSizes });
+    const drop = new Set(plan.dropSessions.filter((id) => id !== activeNow && id !== this.session?.id));
+    for (const id of drop) await store.deleteSessionFiles(id);
+    await this.withIndex((idx) => {
+      idx.sessions = idx.sessions.filter((s) => !drop.has(s.id));
+    });
+    // never delete a blob younger than 10 minutes: it may belong to a session being written right now;
+    // and never a blob referenced by a session that was created while we were scanning
     const young = this.now().getTime() - 10 * 60_000;
+    const known = new Set(sessions.map((s) => s.id));
+    const fresh = (await store.readIndex()).sessions.some((s) => !known.has(s.id));
     let deleted = 0;
-    for (const sha of plan.deleteBlobs) {
-      const b = blobs.find((x) => x.sha === sha);
-      if (b && b.mtimeMs > young) continue;
-      await store.deleteBlob(sha);
-      deleted++;
+    if (!fresh) {
+      for (const sha of plan.deleteBlobs) {
+        const b = blobs.find((x) => x.sha === sha);
+        if (b && b.mtimeMs > young) continue;
+        await store.deleteBlob(sha);
+        deleted++;
+      }
     }
-    return { droppedSessions: plan.dropSessions.length, deletedBlobs: deleted };
+    return { droppedSessions: drop.size, deletedBlobs: deleted };
   }
 
   // ------------------------------------------------------------------------------------------

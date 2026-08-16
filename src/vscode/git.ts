@@ -58,6 +58,8 @@ export interface GitContext {
   prefix: string;
   root: string;
   gitPath: string;
+  /** absolute git directory (`.git` folder, or the worktree/submodule git dir) — watched for HEAD/index moves */
+  gitDir?: string;
 }
 
 /**
@@ -70,9 +72,11 @@ export async function detectGit(folder: vscode.Uri): Promise<GitContext | undefi
   const top = await gitToplevel(gitPath, folder.fsPath);
   if (!top) return undefined;
   const runner = new NodeGit(gitPath, folder.fsPath);
-  const pre = await runner.run(['rev-parse', '--show-prefix']);
-  const prefix = pre.code === 0 ? pre.stdout.toString('utf8').trim() : '';
-  return { runner, prefix, root: top, gitPath };
+  const pre = await runner.run(['rev-parse', '--show-prefix', '--absolute-git-dir']);
+  const lines = pre.code === 0 ? pre.stdout.toString('utf8').split(/\r?\n/) : [];
+  const prefix = (lines[0] ?? '').trim();
+  const gitDir = (lines[1] ?? '').trim() || undefined;
+  return { runner, prefix, root: top, gitPath, gitDir };
 }
 
 /** The SCM input box of the repository containing `folder`, if the git extension knows it. */

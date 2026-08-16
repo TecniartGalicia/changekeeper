@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { l10n } from 'vscode';
 import { DiscardPlan } from '../core/engine';
 import { FileChange } from '../core/session';
-import { baselineUri, emptyUri, log } from './env';
+import { baselineUri, emptyUri } from './env';
 import { FolderGuard } from './folderGuard';
 import { GuardManager } from './guardManager';
 import { FileNode, HunkNode, Node, SessionNode } from './views/tree';
@@ -45,14 +45,16 @@ export class ReviewCommands {
     }
     const { guard, change } = t;
     const session = guard.engine.session!;
-    const left = change.kind === 'A' ? emptyUri(change.path) : baselineUri(guard.folder.uri, change.path, session.id);
+    // a rename diffs against the baseline of its source; an addition against nothing
+    const leftPath = change.kind === 'R' && change.renamedFrom ? change.renamedFrom : change.path;
+    const left = change.kind === 'A' ? emptyUri(change.path) : baselineUri(guard.folder.uri, leftPath, session.id);
     const right = change.kind === 'D' ? emptyUri(change.path) : this.fileUri(guard, change.path);
     const title = `${path.posix.basename(change.path)} (${l10n.t('baseline')} ↔ ${l10n.t('now')})`;
     const opts: vscode.TextDocumentShowOptions = { preview: true };
     if (t.hunkId) {
       const meta = change.hunkMeta?.[t.hunkId];
       if (meta) {
-        const line = Math.max(0, (meta.newLines === 0 ? meta.newStart : meta.newStart - 1));
+        const line = Math.max(0, meta.firstLine ?? (meta.newLines === 0 ? meta.newStart : meta.newStart - 1));
         opts.selection = new vscode.Range(line, 0, line, 0);
       }
     }
@@ -110,8 +112,9 @@ export class ReviewCommands {
       return false;
     }
     if (!plan.isOpen) {
-      await guard.engine.applyDiscardToDisk(plan, hunkId);
-      return true;
+      const r = await guard.engine.applyDiscardToDisk(plan, hunkId);
+      if (!r.ok) void vscode.window.showWarningMessage(l10n.t('ChangeKeeper: cannot discard this hunk: {0}.', l10n.t('the file changed since this hunk was computed — the view has been refreshed')));
+      return r.ok;
     }
     return this.applyPlanToDocument(guard, plan, hunkId);
   }
@@ -120,6 +123,12 @@ export class ReviewCommands {
     const uri = this.fileUri(guard, plan.rel);
     const doc = await vscode.workspace.openTextDocument(uri);
     const wasDirty = doc.isDirty;
+    // the buffer must still be what the plan was computed on (the agent may have written meanwhile)
+    const fresh = await guard.engine.view(plan.rel);
+    if (!fresh || fresh.currentSha !== plan.currentSha) {
+      void vscode.window.showWarningMessage(l10n.t('ChangeKeeper: cannot discard this hunk: {0}.', l10n.t('the file changed since this hunk was computed — the view has been refreshed')));
+      return false;
+    }
     const start = new vscode.Position(plan.startLine, 0);
     const end = plan.endLine >= doc.lineCount ? doc.lineAt(doc.lineCount - 1).range.end : new vscode.Position(plan.endLine, 0);
     const edit = new vscode.WorkspaceEdit();
@@ -128,7 +137,7 @@ export class ReviewCommands {
     if (ok && doc.getText() !== plan.newText) {
       // EOL normalisation or an edge at end-of-file made the range edit inexact: replace the whole text
       const full = new vscode.WorkspaceEdit();
-      full.replace(uri, new vscode.Range(0, 0, doc.lineCount, 0), plan.newText);
+      full.replace(uri, doc.validateRange(new vscode.Range(0, 0, doc.lineCount, 0)), plan.newText);
       ok = await vscode.workspace.applyEdit(full, { isRefactoring: true });
     }
     if (!ok) {
@@ -166,8 +175,11 @@ export class ReviewCommands {
   }
 
   async restoreSession(): Promise<void> {
-    const guard = await this.manager.pickGuard();
-    if (!guard || !guard.hasSession) return;
+    const guard = await this.manager.pickGuard((g) => g.hasSession && g.engine.changes().length > 0);
+    if (!guard || !guard.hasSession) {
+      void vscode.window.showInformationMessage(l10n.t('ChangeKeeper: no changes to restore.'));
+      return;
+    }
     const changes = guard.engine.changes();
     if (!changes.length) return;
     const yes = l10n.t('Restore all');
@@ -202,12 +214,12 @@ export class ReviewCommands {
   }
 
   async undoRestore(): Promise<void> {
-    const guards = this.manager.all().filter((g) => g.engine.lastUndoableRestore());
+    const guards = this.manager.all().filter((g) => g.hasSession && g.engine.lastUndoableRestore());
     if (!guards.length) {
       void vscode.window.showInformationMessage(l10n.t('ChangeKeeper: nothing to undo.'));
       return;
     }
-    const guard = guards.length === 1 ? guards[0] : await this.manager.pickGuard();
+    const guard = guards.length === 1 ? guards[0] : await this.manager.pickGuard((g) => guards.includes(g));
     if (!guard) return;
     const rec = guard.engine.lastUndoableRestore();
     if (!rec) return;
@@ -221,32 +233,52 @@ export class ReviewCommands {
     void vscode.window.showInformationMessage(l10n.t('ChangeKeeper: undo — {0} file(s) put back.', res.filter((r) => r.status === 'undone').length));
   }
 
-  /** Invoked from the diff editor gutter (VS Code passes an internal context object). */
-  async acceptHunkFromGutter(arg?: any): Promise<void> {
-    try {
-      const modifiedUri: vscode.Uri | undefined = arg?.modifiedUri ?? vscode.window.activeTextEditor?.document.uri;
-      if (!modifiedUri) return;
-      const guard = this.manager.guardFor(modifiedUri);
-      const rel = guard?.engine.relOf(modifiedUri.fsPath);
-      if (!guard || !rel) return;
-      const view = await guard.engine.view(rel);
-      if (!view || !view.hunks) return;
-      const startLine: number | undefined = arg?.mapping?.modified?.startLineNumber ?? arg?.mapping?.modifiedRange?.startLineNumber;
-      const endLine: number | undefined = arg?.mapping?.modified?.endLineNumberExclusive ?? arg?.mapping?.modifiedRange?.endLineNumberExclusive;
-      let ids: string[];
-      if (typeof startLine === 'number' && typeof endLine === 'number') {
-        // VS Code's blocks and our hunks are computed by different differs; accept every hunk that overlaps
-        ids = view.hunks.filter((h) => h.newStart <= endLine && h.newStart + Math.max(1, h.newLines) > startLine).map((h) => h.id);
-      } else {
-        const sel = vscode.window.activeTextEditor?.selection;
-        const line = (sel?.active.line ?? 0) + 1;
-        ids = view.hunks.filter((h) => line >= h.newStart && line < h.newStart + Math.max(1, h.newLines)).map((h) => h.id);
-      }
-      for (const id of ids) guard.engine.setHunkStatus(rel, id, 'accepted');
-      if (!ids.length) void vscode.window.showInformationMessage(l10n.t('ChangeKeeper: no tracked hunk at this position.'));
-    } catch (e) {
-      log(`acceptHunkFromGutter: ${String(e)}`);
+  /**
+   * "Accept / discard hunk at cursor": from the diff editor (right side) or the normal editor. The
+   * diff-gutter menu contribution is a proposed API (`contribDiffEditorGutterToolBarMenus`), so these
+   * commands live in the editor title/context menus and use the cursor line.
+   */
+  private async hunkAtCursor(arg?: any): Promise<{ guard: FolderGuard; rel: string; ids: string[] } | undefined> {
+    const editor = vscode.window.activeTextEditor;
+    const modifiedUri: vscode.Uri | undefined = arg instanceof vscode.Uri ? arg : arg?.modifiedUri ?? editor?.document.uri;
+    if (!modifiedUri || modifiedUri.scheme !== 'file') return undefined;
+    const guard = this.manager.guardFor(modifiedUri);
+    const rel = guard?.engine.relOf(modifiedUri.fsPath);
+    if (!guard || !rel) return undefined;
+    const view = await guard.engine.view(rel);
+    if (!view || !view.hunks) return undefined;
+    const startLine: number | undefined = arg?.mapping?.modified?.startLineNumber;
+    const endLine: number | undefined = arg?.mapping?.modified?.endLineNumberExclusive;
+    let ids: string[];
+    if (typeof startLine === 'number' && typeof endLine === 'number') {
+      // VS Code's blocks and our hunks are computed by different differs: take every hunk that overlaps
+      ids = view.hunks.filter((h) => h.newStart <= endLine && h.newStart + Math.max(1, h.newLines) > startLine).map((h) => h.id);
+    } else {
+      const line = (editor?.selection.active.line ?? 0) + 1;
+      ids = view.hunks.filter((h) => line >= h.newStart && line < h.newStart + Math.max(1, h.newLines)).map((h) => h.id);
     }
+    return { guard, rel, ids };
+  }
+
+  async acceptHunkAtCursor(arg?: any): Promise<void> {
+    const t = await this.hunkAtCursor(arg);
+    if (!t || !t.ids.length) {
+      void vscode.window.showInformationMessage(l10n.t('ChangeKeeper: no tracked hunk at this position.'));
+      return;
+    }
+    for (const id of t.ids) t.guard.engine.setHunkStatus(t.rel, id, 'accepted');
+  }
+
+  async discardHunkAtCursor(arg?: any): Promise<void> {
+    const t = await this.hunkAtCursor(arg);
+    if (!t || !t.ids.length) {
+      void vscode.window.showInformationMessage(l10n.t('ChangeKeeper: no tracked hunk at this position.'));
+      return;
+    }
+    // hunks are independent; discard from the bottom so earlier line numbers stay valid
+    const view = await t.guard.engine.view(t.rel);
+    const ordered = (view?.hunks ?? []).filter((h) => t.ids.includes(h.id)).sort((a, b) => b.newStart - a.newStart);
+    for (const h of ordered) await this.discard(t.guard, t.rel, h.id);
   }
 
   // ---- session lifecycle --------------------------------------------------------------------
@@ -266,14 +298,17 @@ export class ReviewCommands {
   }
 
   async stopSession(arg?: unknown): Promise<void> {
-    const guard = arg instanceof SessionNode ? arg.guard : await this.manager.pickGuard();
-    if (!guard || !guard.hasSession) return;
+    const guard = arg instanceof SessionNode ? arg.guard : await this.manager.pickGuard((g) => g.hasSession);
+    if (!guard || !guard.hasSession) {
+      void vscode.window.showInformationMessage(l10n.t('ChangeKeeper: no running session.'));
+      return;
+    }
     await guard.stop();
     void vscode.window.setStatusBarMessage(l10n.t('ChangeKeeper: session stopped for {0}', guard.folder.name), 3000);
   }
 
   async resumeBurst(arg?: unknown): Promise<void> {
-    const guard = arg instanceof FolderGuard ? arg : (await this.manager.all().find((g) => g.engine.burst.paused)) ?? (await this.manager.pickGuard());
+    const guard = arg instanceof FolderGuard ? arg : this.manager.all().find((g) => g.engine.burst.paused) ?? (await this.manager.pickGuard((g) => g.hasSession));
     if (!guard) return;
     const items: { label: string; choice: 'track' | 'ignore' | 'rebase' | 'exclude' }[] = [
       { label: l10n.t('Track the paused files'), choice: 'track' },
@@ -289,11 +324,17 @@ export class ReviewCommands {
     const yes = l10n.t('Purge');
     const pick = await vscode.window.showWarningMessage(l10n.t('ChangeKeeper: delete ALL stored sessions and baselines of the open folders? Running sessions are stopped. This cannot be undone.'), { modal: true }, yes);
     if (pick !== yes) return;
+    let skipped = 0;
     for (const g of this.manager.all()) {
+      if (!(await g.mayTouchStore())) {
+        skipped++;
+        continue; // another live window owns this folder's session: never destroy its data from here
+      }
       await g.stop();
       await g.store.purge();
     }
-    void vscode.window.showInformationMessage(l10n.t('ChangeKeeper: data purged.'));
+    if (skipped) void vscode.window.showWarningMessage(l10n.t('ChangeKeeper: {0} folder(s) were skipped because another VS Code window is guarding them.', skipped));
+    else void vscode.window.showInformationMessage(l10n.t('ChangeKeeper: data purged.'));
   }
 
   static nodeOf(arg: unknown): Node | undefined {

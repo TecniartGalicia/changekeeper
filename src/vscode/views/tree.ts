@@ -106,6 +106,7 @@ export class ChangesTree implements vscode.TreeDataProvider<Node> {
     const pending = hunkIds.filter((id) => c.hunks[id] === 'pending').length;
     const reviewed = isFileReviewed(c);
     const item = new vscode.TreeItem(path.posix.basename(c.path), hunkIds.length ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
+    item.id = `${n.guard.folder.uri.toString()}|${c.path}`;
     const dir = path.posix.dirname(c.path);
     const parts: string[] = [];
     if (dir !== '.') parts.push(dir);
@@ -115,6 +116,7 @@ export class ChangesTree implements vscode.TreeDataProvider<Node> {
     if (c.tooLarge) parts.push(l10n.t('too large'));
     if (c.baselineUnavailable) parts.push(l10n.t('no baseline'));
     if (c.baselineUncertain) parts.push(l10n.t('baseline uncertain'));
+    if (c.eolOnly) parts.push(l10n.t('line endings only'));
     item.description = parts.join(' · ');
     const [icon, color] = KIND_ICON[c.kind];
     item.iconPath = c.critical && !reviewed ? new vscode.ThemeIcon('warning', new vscode.ThemeColor('list.warningForeground')) : new vscode.ThemeIcon(icon, new vscode.ThemeColor(color));
@@ -122,9 +124,15 @@ export class ChangesTree implements vscode.TreeDataProvider<Node> {
     item.contextValue = `ck.file${c.critical ? '.critical' : ''}${reviewed ? '.reviewed' : ''}`;
     item.command = { command: 'changekeeper.openDiff', title: l10n.t('Open diff'), arguments: [n] };
     const md = new vscode.MarkdownString();
-    md.appendMarkdown(`**${c.path}**\n\n`);
-    md.appendMarkdown(`${l10n.t('Kind')}: ${c.kind}${c.renamedFrom ? ` (${c.renamedFrom})` : ''}  \n`);
+    // paths may contain markdown metacharacters (__init__.py, *.md): append them as text
+    md.appendMarkdown('**');
+    md.appendText(c.path);
+    md.appendMarkdown('**\n\n');
+    md.appendMarkdown(`${l10n.t('Kind')}: ${c.kind}`);
+    if (c.renamedFrom) md.appendText(` (${c.renamedFrom})`);
+    md.appendMarkdown('  \n');
     if (c.critical) md.appendMarkdown(`$(warning) ${l10n.t('Critical file: review carefully')}  \n`);
+    if (c.eolOnly) md.appendMarkdown(`${l10n.t('Only line endings, BOM or encoding differ from the baseline (no line changed).')}  \n`);
     if (hunkIds.length) md.appendMarkdown(`${l10n.t('Hunks')}: ${hunkIds.length} (${l10n.t('{0} pending', pending)})  \n`);
     if (c.baselineUnavailable) md.appendMarkdown(`${l10n.t('Baseline unavailable')}: ${c.baselineUnavailable}  \n`);
     if (c.baselineUncertain) md.appendMarkdown(`${l10n.t('The file changed while the baseline was being taken; the baseline may not be the pre-agent content.')}  \n`);

@@ -38,6 +38,7 @@ export interface Lock {
 }
 
 const RETRIES = 6;
+let tmpCounter = 0;
 
 async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   let last: unknown;
@@ -60,7 +61,8 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
 export async function atomicWrite(file: string, data: Buffer | string): Promise<void> {
   const dir = path.dirname(file);
   await fs.mkdir(dir, { recursive: true });
-  const tmp = path.join(dir, `.${path.basename(file)}.${process.pid}.${Date.now()}.tmp`);
+  // own suffix so watchers/rules can ignore it (HARD_EXCLUDES); counter avoids same-ms collisions
+  const tmp = path.join(dir, `.${path.basename(file)}.${process.pid}.${Date.now()}.${++tmpCounter}.ck-tmp`);
   try {
     await fs.writeFile(tmp, data);
     await withRetry(() => fs.rename(tmp, file));
@@ -69,13 +71,20 @@ export async function atomicWrite(file: string, data: Buffer | string): Promise<
   }
 }
 
+/** Reads a JSON file; a corrupt file is set aside as `<name>.corrupt` and treated as absent (never blocks activation). */
 export async function readJson<T>(file: string): Promise<T | undefined> {
+  let raw: string;
   try {
-    const raw = await fs.readFile(file, 'utf8');
-    return JSON.parse(raw) as T;
+    raw = await fs.readFile(file, 'utf8');
   } catch (e: any) {
     if (e && e.code === 'ENOENT') return undefined;
     throw e;
+  }
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    await fs.rename(file, `${file}.${Date.now()}.corrupt`).catch(() => undefined);
+    return undefined;
   }
 }
 
@@ -206,6 +215,12 @@ export class WorkspaceStore {
     if (cur && cur.pid !== pid && isAlive(cur.pid)) return { ok: false, ownerPid: cur.pid };
     await atomicWrite(this.lockFile, JSON.stringify({ pid, since: new Date().toISOString() } as Lock));
     return { ok: true };
+  }
+
+  /** pid of a *live* process holding the lock, or undefined. */
+  async lockOwner(isAlive: (pid: number) => boolean = processAlive): Promise<number | undefined> {
+    const cur = await readJson<Lock>(this.lockFile);
+    return cur && isAlive(cur.pid) ? cur.pid : undefined;
   }
 
   async releaseLock(pid: number): Promise<void> {

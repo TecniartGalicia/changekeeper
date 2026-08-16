@@ -41,6 +41,10 @@ async function main(): Promise<void> {
   const vscodeExecutablePath = process.env.CK_VSCODE_EXE || undefined;
   if (vscodeExecutablePath) console.log(`Running the integration suite in: ${vscodeExecutablePath}`);
   const userDataDir = path.join(extensionDevelopmentPath, '.vscode-test', 'user-data');
+  // a previous run's ChangeKeeper storage/state must not leak into this one (first-run flag, old sessions)
+  fs.rmSync(path.join(userDataDir, 'User', 'globalStorage', 'argalla.changekeeper'), { recursive: true, force: true });
+  fs.rmSync(path.join(userDataDir, 'User', 'globalStorage', 'state.vscdb'), { force: true });
+  fs.rmSync(path.join(userDataDir, 'User', 'globalStorage', 'state.vscdb-journal'), { force: true });
   try {
     await runTests({
       ...(vscodeExecutablePath ? { vscodeExecutablePath } : {}),
