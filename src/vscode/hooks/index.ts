@@ -176,6 +176,7 @@ export class HooksFeature implements vscode.Disposable {
 
   dispose(): void {
     for (const d of this.disposables) d.dispose();
-    void this.server.dispose();
+    // the constructor may still be deciding whether to start the receiver: dispose after that settles
+    void (this.starting ?? Promise.resolve()).catch(() => undefined).then(() => this.server.dispose());
   }
 }

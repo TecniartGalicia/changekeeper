@@ -1,7 +1,7 @@
 {
   "name": "changekeeper",
   "displayName": "ChangeKeeper",
-  "description": "Keep, review hunk by hunk, validate and roll back every change your AI coding agent makes — including edits made from the shell. Works with Claude Code, Codex, Copilot, Cursor and more. Local-first, no telemetry. Not affiliated with any agent vendor.",
+  "description": "Keep, review hunk by hunk, validate and roll back every change your AI coding agent makes — including edits made from the shell. Agent-agnostic: it watches your files, not the agent (Claude Code, Codex, Copilot, Cursor…). Local-first, no telemetry. Not affiliated with any agent vendor.",
   "version": "0.2.0",
   "publisher": "argalla",
   "license": "MIT",

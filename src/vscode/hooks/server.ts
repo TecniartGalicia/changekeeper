@@ -47,6 +47,7 @@ export class HookServer implements vscode.Disposable {
   private retry: ReturnType<typeof setTimeout> | undefined;
   private inboxTimer: ReturnType<typeof setInterval> | undefined;
   private beatTimer: ReturnType<typeof setInterval> | undefined;
+  private startPromise: Promise<void> | undefined;
   private tick = 0;
   private tokenValue: string | undefined;
   private tokenReloadedAt = 0;
@@ -140,19 +141,36 @@ export class HookServer implements vscode.Disposable {
     this.started = true;
     this.folders = folders;
     this.since = new Date().toISOString();
-    await fs.mkdir(path.join(this.root, 'windows'), { recursive: true });
-    await fs.mkdir(this.inboxDir, { recursive: true });
-    await this.token();
-    await this.register();
-    await this.tryBind();
-    if (!this.inboxTimer) this.inboxTimer = setInterval(() => void this.onTick(), INBOX_MS);
-    if (!this.beatTimer) this.beatTimer = setInterval(() => void this.register().catch(() => undefined), HEARTBEAT_MS);
+    // `stop()`/`dispose()` may land while we are still setting up: they await this promise, and every
+    // step re-checks `started` so a cancelled start never leaves a timer or a listener behind.
+    this.startPromise = (async () => {
+      await fs.mkdir(path.join(this.root, 'windows'), { recursive: true });
+      await fs.mkdir(this.inboxDir, { recursive: true });
+      await this.token();
+      if (!this.started) return;
+      await this.register();
+      if (!this.started) return;
+      await this.tryBind();
+      if (!this.started) {
+        await this.closeServer();
+        return;
+      }
+      if (!this.inboxTimer) this.inboxTimer = setInterval(() => void this.onTick(), INBOX_MS);
+      if (!this.beatTimer) this.beatTimer = setInterval(() => void this.register().catch(() => undefined), HEARTBEAT_MS);
+    })();
+    try {
+      await this.startPromise;
+    } finally {
+      this.startPromise = undefined;
+    }
   }
 
   /** Stops the receiver (port released, registration removed); `start()` may be called again later. */
   async stop(): Promise<void> {
     if (!this.started) return;
     this.started = false;
+    // a start still running sees `started === false` and bails out; wait for it so nothing survives us
+    await this.startPromise?.catch(() => undefined);
     if (this.retry) clearTimeout(this.retry);
     this.retry = undefined;
     if (this.inboxTimer) clearInterval(this.inboxTimer);

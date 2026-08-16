@@ -9,6 +9,7 @@ const EXT = { publisher: 'argalla', name: 'changekeeper', repo: 'TecniartGalicia
 const args = new Set(process.argv.slice(2));
 const UA = { 'User-Agent': 'changekeeper-metrics/1.0 (+https://github.com/TecniartGalicia/changekeeper)' };
 const nd = 'n/d';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function json(url, init = {}) {
   try {
@@ -22,19 +23,28 @@ async function json(url, init = {}) {
 async function marketplace() {
   const body = { filters: [{ criteria: [{ filterType: 7, value: `${EXT.publisher}.${EXT.name}` }] }], flags: 914 };
   // The gallery answers from several caches that disagree by hours; installs/downloads only grow, so ask a few times with
-  // different headers and keep the max of each statistic.
+  // The gallery answers WITHOUT `statistics` most of the time (measured: ~1 in 6 answers carries them,
+  // regardless of api-version or headers), so we retry until one does — and keep the max of each.
   const variants = [{}, { 'Cache-Control': 'no-cache', Pragma: 'no-cache' }, { 'Accept-Encoding': 'identity' }];
   let e; const st = {};
-  for (const extra of variants) {
+  for (let attempt = 0; attempt < 15 && Object.keys(st).length === 0; attempt++) {
+    const extra = variants[attempt % variants.length];
     const j = await json('https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json;api-version=7.1-preview.1', ...extra }, body: JSON.stringify(body) });
     const x = j?.results?.[0]?.extensions?.[0];
-    if (!x) continue;
+    if (!x) {
+      await sleep(600);
+      continue;
+    }
     e = e ?? x;
     for (const s of x.statistics || []) st[s.statisticName] = Math.max(st[s.statisticName] ?? 0, Number(s.value) || 0);
+    if (Object.keys(st).length === 0) await sleep(600);
   }
   if (!e) return { installs: nd, downloads: nd, version: nd, rating: nd, ratings: nd, reviews: nd, reviewList: [] };
   const rv = await json(`https://marketplace.visualstudio.com/_apis/public/gallery/publishers/${EXT.publisher}/extensions/${EXT.name}/reviews?count=100&filterOptions=1&api-version=7.1-preview.1`, { headers: { Accept: 'application/json;api-version=7.1-preview.1' } });
-  return { installs: st.install ?? 0, downloads: st.downloadCount ?? 0, version: e.versions?.[0]?.version ?? nd, rating: st.averagerating ? Number(st.averagerating).toFixed(1) : '-', ratings: st.ratingcount ?? 0, reviews: rv?.totalReviewCount ?? nd, reviewList: rv?.reviews ?? [] };
+  // The gallery often answers without `statistics` at all; reporting 0 in that case is a lie that would
+  // also overwrite a good measurement of the same day (see --append below), so it is n/d instead.
+  const noStats = Object.keys(st).length === 0;
+  return { installs: noStats ? nd : st.install ?? 0, downloads: noStats ? nd : st.downloadCount ?? 0, version: e.versions?.[0]?.version ?? nd, rating: st.averagerating ? Number(st.averagerating).toFixed(1) : '-', ratings: noStats ? nd : st.ratingcount ?? 0, reviews: rv?.totalReviewCount ?? nd, reviewList: rv?.reviews ?? [] };
 }
 
 async function openvsx() {
@@ -75,13 +85,17 @@ async function polar() {
   const tok = polarToken();
   if (!tok) return { orders: nd, revenue: nd, keys: nd, note: 'sin POLAR_OAT (mirar panel)' };
   const H = { Authorization: `Bearer ${tok}` };
-  const o = await json(`https://api.polar.sh/v1/orders/?organization_id=${EXT.polarOrg}&limit=100`, { headers: H });
-  const k = await json(`https://api.polar.sh/v1/license-keys/?organization_id=${EXT.polarOrg}&limit=100`, { headers: H });
+  // an empty organization_id is a malformed filter (422): the token is already scoped to the org, so omit it
+  const org = EXT.polarOrg ? `organization_id=${EXT.polarOrg}&` : '';
+  const o = await json(`https://api.polar.sh/v1/orders/?${org}limit=100`, { headers: H });
+  const k = await json(`https://api.polar.sh/v1/license-keys/?${org}limit=100`, { headers: H });
   if (o?.__err) return { orders: nd, revenue: nd, keys: nd, note: `Polar API: ${o.__err}` };
   const items = o.items || [];
   const paid = items.filter((x) => (x.net_amount ?? x.amount ?? 0) > 0);
   const revenue = paid.reduce((a, x) => a + (x.net_amount ?? x.amount ?? 0), 0) / 100;
-  return { orders: items.length, paidOrders: paid.length, revenue: revenue.toFixed(2) + ' €', keys: k?.pagination?.total_count ?? (k?.items || []).length, granted: (k?.items || []).filter((x) => x.status === 'granted').length };
+  const cur = paid[0]?.currency ? String(paid[0].currency).toUpperCase() : 'EUR';
+  const keys = k?.__err ? nd : k?.pagination?.total_count ?? (k?.items || []).length;
+  return { orders: items.length, paidOrders: paid.length, revenue: `${revenue.toFixed(2)} ${cur === 'EUR' ? '€' : cur}`, keys, granted: k?.__err ? undefined : (k?.items || []).filter((x) => x.status === 'granted').length, note: k?.__err ? `claves: ${k.__err}` : undefined };
 }
 
 const [mk, ov, gh, hnr, rd, po] = await Promise.all([marketplace(), openvsx(), github(), hn(), reddit(), polar()]);
@@ -101,11 +115,28 @@ if (args.has('--json')) {
   if (po.note) console.log(`\nPolar: ${po.note}`);
 }
 
+/** Cell-by-cell merge of two rows of the same day: a number never goes down, n/d never wins over a value. */
+function mergeRows(a, b) {
+  const A = a.split('|'), B = b.split('|');
+  if (A.length !== B.length) return b;
+  return B.map((cell, i) => {
+    const x = A[i].trim(), y = cell.trim();
+    if (!y || y === nd) return A[i];
+    if (!x || x === nd) return cell;
+    const nx = Number(x), ny = Number(y);
+    if (Number.isFinite(nx) && Number.isFinite(ny)) return nx > ny ? A[i] : cell;
+    return cell;
+  }).join('|');
+}
+
 if (args.has('--append')) {
   const file = path.resolve('docs', 'METRICAS.md');
   let text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
   if (!text.includes('| Fecha |')) text = `# Métricas — ChangeKeeper\n\nGeneradas con \`node scripts/metrics.mjs --append\` (APIs públicas; Polar solo con POLAR_OAT). "n/d" = no disponible.\n\n${header}\n`;
-  if (!text.includes(`| ${today} |`)) fs.writeFileSync(file, text.replace(/\n*$/, '\n') + row + '\n', 'utf8');
-  else fs.writeFileSync(file, text.replace(new RegExp(`\\| ${today} \\|.*`), row), 'utf8');
+  const prev = text.split(/\r?\n/).find((l) => l.startsWith(`| ${today} |`));
+  // never let a bad read (n/d, or the gallery's frequent empty answer) lower a counter already recorded today
+  const merged = prev ? mergeRows(prev, row) : row;
+  if (!prev) fs.writeFileSync(file, text.replace(/\n*$/, '\n') + merged + '\n', 'utf8');
+  else fs.writeFileSync(file, text.replace(prev, merged), 'utf8');
   console.log(`\n→ ${path.relative(process.cwd(), file)} actualizado`);
 }

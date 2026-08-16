@@ -18,7 +18,7 @@ Los agentes con IDE propio ya ofrecen *Mantener / Deshacer* para las ediciones q
 
 | | |
 | :-- | :-- |
-| **Línea base al instante** | En un repositorio git la línea base es el índice al empezar la sesión: no se copia nada hasta que un fichero cambia de verdad. Las carpetas sin git se copian (con límites). |
+| **Línea base al instante** | En un repositorio git la línea base es el índice al empezar la sesión: los ficheros limpios no se copian, solo se guarda su identificador de objeto git (los que ya estaban modificados o sin seguimiento al empezar sí se copian, con límites). Las carpetas sin git se copian (con límites). |
 | **Ve todos los cambios** | Ficheros escritos por cualquier proceso (CLI del agente, scripts, `git checkout`), ficheros editados en el editor, creados, borrados y renombrados. Los ignorados por git se saltan — salvo los **críticos** como `.env*`, que siempre se vigilan. |
 | **Revisión por bloques** | La vista ChangeKeeper lista los ficheros cambiados (críticos primero) y sus bloques. Pulsa un fichero para ver el diff nativo (línea base ↔ ahora): el margen propio de VS Code ofrece *Revertir bloque*, y la barra de título y el menú contextual del diff ofrecen **Aceptar / Descartar bloque bajo el cursor**; en el editor normal un CodeLens sobre cada bloque ofrece **Aceptar · Descartar · Diff** y las líneas cambiadas van resaltadas. |
 | **Descartar exactamente un bloque** | Descartar reescribe solo ese bloque con las líneas de la línea base — el resto conserva su contenido y su propio salto de línea. Los documentos abiertos se editan por el editor (deshacer con Ctrl+Z); los cerrados, en disco, guardando antes los bytes previos para que **Deshacer la última restauración** los devuelva. |
@@ -26,7 +26,7 @@ Los agentes con IDE propio ya ofrecen *Mantener / Deshacer* para las ediciones q
 | **Ficheros críticos** | Migraciones, SQL, workflows de CI, Dockerfiles, `.env*`, carpetas auth/security, manifiestos y locks de paquetes, `.vscode`, `.claude`, `.cursor`, `.github` se marcan y se listan primero. Añade tus propios globs. |
 | **Informe de sesión** | Resumen en Markdown de la sesión (ficheros, bloques aceptados/descartados, críticos) con propuesta de mensaje de commit — expórtalo o pégalo en un PR. |
 | **Guardarraíles** | Una ráfaga de cientos de ficheros nuevos (`npm install`, build, checkout) pausa el registro de ficheros nuevos y te pregunta. Binarios y ficheros enormes se registran pero no se comparan. ¿El agente hace commit o checkout? Se te avisa y puedes tomar una línea base nueva. |
-| **Funciona en todas partes** | Windows (CRLF preservado), macOS, Linux; Remote-SSH / WSL / Dev Containers (corre donde están los ficheros); VS Code, VSCodium, Cursor, Windsurf. Inglés y español. |
+| **Funciona en todas partes** | Windows (CRLF preservado), macOS, Linux (el motor pasa el CI en los tres); Remote-SSH / WSL / Dev Containers (corre donde están los ficheros); VS Code, VSCodium, Cursor, Windsurf. Inglés y español. **Agnóstico de agente**: vigila tus ficheros, así que sirve con cualquiera — lo único específico de un agente es la atribución opcional por hooks (hoy, Claude Code). |
 
 ## Cómo funciona
 
@@ -81,6 +81,12 @@ VS Code 1.95 o superior (o un host compatible). `git` en el PATH (o configurado 
 ## Privacidad y seguridad
 
 Todo ocurre en tu máquina. Sin telemetría, sin cuenta y sin llamadas de red salvo la activación de la licencia Pro y su revalidación cada 24 h, solo en equipos donde hayas introducido una clave. Detalles en [PRIVACY.es.md](PRIVACY.es.md); vulnerabilidades por [SECURITY.md](SECURITY.md).
+
+## Soporte y reembolsos
+
+Dudas, fallos e ideas: [issues de GitHub](https://github.com/TecniartGalicia/changekeeper/issues) (mejor ahí, así aprovecha a todos) o info@tecniartgalicia.com. Es un proyecto pequeño e independiente: la respuesta llega en unos días laborables, no en minutos.
+
+¿Compraste Pro y no te sirve? Escribe a info@tecniartgalicia.com dentro de los 30 días siguientes a la compra y se te devuelve el dinero, sin preguntas: los pagos van por [Polar](https://polar.sh), que es el vendedor legal (*merchant of record*) y tramita el reembolso. Desactivar una clave es gratis y está siempre disponible (**ChangeKeeper Pro: Desactivar licencia**), y todo lo que añade Pro se puede quitar sin licencia.
 
 ## Contribuir y licencia
 

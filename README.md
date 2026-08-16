@@ -18,7 +18,7 @@ Agents with their own IDE already offer *Keep / Undo* for the edits they make th
 
 | | |
 | :-- | :-- |
-| **Baseline in a blink** | In a git repository the baseline is the index at session start — nothing is copied until a file actually changes. Non-git folders are copied (within limits). |
+| **Baseline in a blink** | In a git repository the baseline is the index at session start: clean files aren't copied, only their git object id is kept (files already modified or untracked when the session starts are copied, within limits). Non-git folders are copied (within limits). |
 | **Sees every change** | Files written by any process (agent CLI, scripts, `git checkout`), files edited in the editor, created, deleted and renamed files. Git-ignored files are skipped — except **critical** ones like `.env*`, which are always watched. |
 | **Review hunk by hunk** | The ChangeKeeper view lists changed files (critical ones first) and their hunks. Click a file for the native diff (baseline ↔ now): VS Code's own gutter offers *Revert block*, and the diff's title bar and context menu offer **Accept / Discard hunk at cursor**; in the normal editor a CodeLens above each hunk offers **Accept · Discard · Diff** and changed lines are highlighted. |
 | **Discard exactly one hunk** | Discarding rewrites only that block with the baseline lines — every other line keeps its content and its own line ending. Open documents are edited through the editor (undoable with Ctrl+Z); closed ones on disk, with the previous bytes kept so **Undo last restore** can put them back. |
@@ -26,7 +26,7 @@ Agents with their own IDE already offer *Keep / Undo* for the edits they make th
 | **Critical files** | Migrations, SQL, CI workflows, Dockerfiles, `.env*`, auth/security folders, package manifests and lock files, `.vscode`, `.claude`, `.cursor`, `.github` are flagged and listed first. Add your own globs. |
 | **Session report** | A Markdown summary of the session (files, hunks accepted/discarded, critical files) with a suggested commit message — export it or paste it in a PR. |
 | **Guardrails** | A burst of hundreds of new files (`npm install`, build, checkout) pauses the tracking of new files and asks you. Binary and huge files are recorded but not diffed. Agent commits or checkouts move HEAD? You are told and can re-baseline. |
-| **Works everywhere** | Windows (CRLF preserved), macOS, Linux; Remote-SSH / WSL / Dev Containers (runs where the files are); VS Code, VSCodium, Cursor, Windsurf. English and Spanish. |
+| **Works everywhere** | Windows (CRLF preserved), macOS, Linux (the engine is covered by CI on all three); Remote-SSH / WSL / Dev Containers (runs where the files are); VS Code, VSCodium, Cursor, Windsurf. English and Spanish. **Agent-agnostic**: it watches your files, so any agent works — the only agent-specific piece is the optional hook attribution (Claude Code today). |
 
 ## How it works
 
@@ -81,6 +81,12 @@ VS Code 1.95 or newer (or a compatible host). `git` on your PATH (or configured 
 ## Privacy & security
 
 Everything happens on your machine. No telemetry, no account, and no network calls except Pro licence activation and its 24-hourly re-validation, only on machines where you entered a key. Details in [PRIVACY.md](PRIVACY.md); vulnerabilities via [SECURITY.md](SECURITY.md).
+
+## Support & refunds
+
+Questions, bugs and ideas: [GitHub issues](https://github.com/TecniartGalicia/changekeeper/issues) (preferred, so everyone benefits) or info@tecniartgalicia.com. This is a small, independent project: expect an answer in a few working days, not in minutes.
+
+Bought Pro and it is not for you? Write to info@tecniartgalicia.com within 30 days of the purchase and you get your money back, no questions asked — payments go through [Polar](https://polar.sh), the merchant of record, which issues the refund. Deactivating a licence key is free and always available (**ChangeKeeper Pro: Deactivate Licence**), and everything Pro adds can be removed without a licence.
 
 ## Contributing & licence
 

@@ -1,0 +1,53 @@
+name: Bug report
+description: Something ChangeKeeper did (or did not do) with your changes
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. **Never paste secrets**: ChangeKeeper watches files like `.env`, so redact anything that looks like a key before pasting a diff or a log.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got.
+      placeholder: |
+        1. Started a session in a git repo
+        2. The agent ran `sed -i ...`
+        3. Expected the file in the view; it did not appear
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: ChangeKeeper version, VS Code version (Help → About) and OS.
+      placeholder: "ChangeKeeper 0.2.0 · VS Code 1.105.1 · Windows 11"
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Which agent (if any) made the changes
+      options:
+        - Claude Code
+        - Codex
+        - Copilot
+        - Cursor
+        - Another agent
+        - No agent (my own edits / a script)
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Output panel
+      description: "View → Output → ChangeKeeper. Paste the relevant lines (redact paths/secrets you would rather not share)."
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I redacted secrets and anything I do not want public.
+          required: true
