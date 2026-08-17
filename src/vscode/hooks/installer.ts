@@ -199,15 +199,18 @@ export class HookInstaller {
    * the project's .gitignore). Returns what was done, for the notification and the tests.
    */
   async ensureGitExcluded(folder: string, file: string): Promise<'ignored' | 'excluded' | 'not-git' | 'failed'> {
-    // exclude the path git will actually see (the real one, if `.claude` is a link)
+    // Exclude the path git actually sees: the real one (a symlinked `.claude`, or a workspace
+    // reached through an 8.3 short name on Windows). BOTH sides must be resolved the same way, or
+    // the relative line written into info/exclude is nonsense and git keeps not ignoring the file.
+    const root = resolveDeep(folder);
     file = await this.realProjectPath(folder);
-    const check = await git(['check-ignore', '-q', '--', file], folder);
+    const check = await git(['check-ignore', '-q', '--', file], root);
     if (check.code === 0) return 'ignored';
     if (check.code !== 1) return 'not-git';
-    const p = await git(['rev-parse', '--git-path', 'info/exclude'], folder);
+    const p = await git(['rev-parse', '--git-path', 'info/exclude'], root);
     if (p.code !== 0) return 'not-git';
-    const excludeFile = path.resolve(folder, p.out.trim());
-    const rel = path.relative(folder, file).replace(/\\/g, '/');
+    const excludeFile = path.resolve(root, p.out.trim());
+    const rel = path.relative(root, file).replace(/\\/g, '/');
     const line = '/' + rel;
     try {
       const cur = await fs.readFile(excludeFile, 'utf8').catch(() => '');
