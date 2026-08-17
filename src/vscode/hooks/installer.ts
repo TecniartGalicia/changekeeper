@@ -31,15 +31,22 @@ export function claudeProjectSettingsPath(folder: string): string {
   return path.join(folder, '.claude', 'settings.local.json');
 }
 
-/** Fully resolved path (8.3 short names on Windows included), falling back to the input. */
-async function realOrSelf(p: string): Promise<string> {
-  try {
-    return fsSync.realpathSync.native(p); // resolves 8.3 short names on Windows, which realpath keeps
-  } catch {
+/**
+ * Fully resolved path — 8.3 short names on Windows included (`C:\Users\RUNNER~1` → `…\runneradmin`).
+ * Works for paths that do not exist yet: it resolves the closest existing ancestor and re-joins the
+ * rest, so a file we are about to create can still be compared against its workspace folder.
+ */
+function resolveDeep(p: string): string {
+  const rest: string[] = [];
+  let cur = path.resolve(p);
+  for (;;) {
     try {
-      return await fs.realpath(p);
+      return rest.length ? path.join(fsSync.realpathSync.native(cur), ...[...rest].reverse()) : fsSync.realpathSync.native(cur);
     } catch {
-      return p;
+      const parent = path.dirname(cur);
+      if (parent === cur) return path.resolve(p);
+      rest.push(path.basename(cur));
+      cur = parent;
     }
   }
 }
@@ -123,15 +130,13 @@ export class HookInstaller {
   private async writeSettings(file: string, data: string, insideFolder?: string): Promise<void> {
     let target = file;
     let mode: number | undefined;
-    try {
-      target = fsSync.realpathSync.native(file);
-      mode = (await fs.stat(target)).mode & 0o777;
-    } catch {
-      // new file: resolve the parent so a symlinked `.claude` directory is still caught
-      target = path.join(await realOrSelf(path.dirname(file)), path.basename(file));
-    }
+    target = resolveDeep(file);
+    mode = await fs
+      .stat(target)
+      .then((st) => st.mode & 0o777)
+      .catch(() => undefined);
     if (insideFolder) {
-      const root = await realOrSelf(insideFolder);
+      const root = resolveDeep(insideFolder);
       if (!isInside(root, target)) throw new Error(`refusing to write ${target}: it resolves outside ${root} (symlinked .claude?)`);
     }
     await atomicWrite(target, data, mode !== undefined ? { mode } : { mode: 0o600 });
@@ -140,11 +145,7 @@ export class HookInstaller {
   /** The real path our project-level write would land on (used for the consent dialog and for git-exclude). */
   private async realProjectPath(folder: string): Promise<string> {
     const file = claudeProjectSettingsPath(folder);
-    try {
-      return fsSync.realpathSync.native(file);
-    } catch {
-      return path.join(await realOrSelf(path.dirname(file)), path.basename(file));
-    }
+    return resolveDeep(file);
   }
 
   /** Consent → backup → write. Returns the file written, or undefined when cancelled/failed. */
