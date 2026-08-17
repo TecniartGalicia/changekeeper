@@ -1,6 +1,7 @@
 import { execFile } from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
+import * as fsSync from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -28,6 +29,27 @@ export function claudeUserSettingsPath(): string {
 
 export function claudeProjectSettingsPath(folder: string): string {
   return path.join(folder, '.claude', 'settings.local.json');
+}
+
+/** Fully resolved path (8.3 short names on Windows included), falling back to the input. */
+async function realOrSelf(p: string): Promise<string> {
+  try {
+    return fsSync.realpathSync.native(p); // resolves 8.3 short names on Windows, which realpath keeps
+  } catch {
+    try {
+      return await fs.realpath(p);
+    } catch {
+      return p;
+    }
+  }
+}
+
+/** Is `child` inside `root`? Case-insensitive where the filesystem is. */
+function isInside(root: string, child: string): boolean {
+  const rel = path.relative(root, child);
+  if (!rel) return true;
+  const norm = process.platform === 'win32' || process.platform === 'darwin' ? path.relative(root.toLowerCase(), child.toLowerCase()) : rel;
+  return !norm.startsWith('..') && !path.isAbsolute(norm);
 }
 
 function git(args: string[], cwd: string): Promise<{ code: number; out: string }> {
@@ -102,20 +124,15 @@ export class HookInstaller {
     let target = file;
     let mode: number | undefined;
     try {
-      target = await fs.realpath(file);
+      target = fsSync.realpathSync.native(file);
       mode = (await fs.stat(target)).mode & 0o777;
     } catch {
       // new file: resolve the parent so a symlinked `.claude` directory is still caught
-      try {
-        target = path.join(await fs.realpath(path.dirname(file)), path.basename(file));
-      } catch {
-        /* the directory does not exist yet either */
-      }
+      target = path.join(await realOrSelf(path.dirname(file)), path.basename(file));
     }
     if (insideFolder) {
-      const root = await fs.realpath(insideFolder).catch(() => insideFolder);
-      const rel = path.relative(root, target);
-      if (rel.startsWith('..') || path.isAbsolute(rel)) throw new Error(`refusing to write ${target}: it resolves outside ${root} (symlinked .claude?)`);
+      const root = await realOrSelf(insideFolder);
+      if (!isInside(root, target)) throw new Error(`refusing to write ${target}: it resolves outside ${root} (symlinked .claude?)`);
     }
     await atomicWrite(target, data, mode !== undefined ? { mode } : { mode: 0o600 });
   }
@@ -124,13 +141,9 @@ export class HookInstaller {
   private async realProjectPath(folder: string): Promise<string> {
     const file = claudeProjectSettingsPath(folder);
     try {
-      return await fs.realpath(file);
+      return fsSync.realpathSync.native(file);
     } catch {
-      try {
-        return path.join(await fs.realpath(path.dirname(file)), path.basename(file));
-      } catch {
-        return file;
-      }
+      return path.join(await realOrSelf(path.dirname(file)), path.basename(file));
     }
   }
 

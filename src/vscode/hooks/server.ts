@@ -304,9 +304,8 @@ export class HookServer implements vscode.Disposable {
       }
       const raw = await this.readBody(req);
       if (raw === 'too-large') {
-        // answer first, then let the socket go: the rest of the body is discarded, the connection
-        // is closed after the response (or hard-closed after 2 s if the sender never stops)
-        res.setHeader('Connection', 'close');
+        // answer, then keep draining what is still coming: closing the socket mid-upload makes the
+        // sender fail with EPIPE (seen on macOS CI). A hard close only if it never stops.
         res.writeHead(413).end();
         const kill = setTimeout(() => req.destroy(), 2000);
         kill.unref?.();

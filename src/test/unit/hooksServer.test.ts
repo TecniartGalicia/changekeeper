@@ -26,11 +26,15 @@ function freePort(): Promise<number> {
 function post(port: number, body: unknown, opts: { token?: string; method?: string; path?: string; raw?: string | Buffer } = {}): Promise<number> {
   return new Promise((resolve, reject) => {
     const data = opts.raw !== undefined ? Buffer.from(opts.raw) : Buffer.from(JSON.stringify(body));
+    let status: number | undefined;
     const req = http.request({ host: '127.0.0.1', port, path: opts.path ?? '/hook', method: opts.method ?? 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': data.length, ...(opts.token ? { 'X-CK-Token': opts.token } : {}) } }, (res) => {
+      status = res.statusCode ?? 0;
       res.resume();
-      res.on('end', () => resolve(res.statusCode ?? 0));
+      res.on('end', () => resolve(status!));
     });
-    req.on('error', reject);
+    // an oversized body is answered and then cut: the write may fail with EPIPE/ECONNRESET, which is
+    // a legitimate end of that exchange as long as the status line already arrived
+    req.on('error', (e) => (status !== undefined ? resolve(status) : reject(e)));
     req.end(data);
   });
 }
