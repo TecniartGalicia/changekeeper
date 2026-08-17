@@ -22,6 +22,8 @@
 export const POLAR_BASE = 'https://api.polar.sh/v1/customer-portal/license-keys';
 export const GRACE_DAYS = 14;
 export const REVALIDATE_HOURS = 24;
+/** After a failed check we do not try again for this long (the grace window covers the gap). */
+export const RETRY_MINUTES = 30;
 
 export interface LicenseState {
   version?: 1;
@@ -49,6 +51,11 @@ export type ProDecision =
   | { pro: false; reason: 'no-key' | 'not-configured' | 'invalid' | 'expired' | 'grace-expired' | 'revoked' | 'activation-removed' | 'network' };
 
 /** Maps a persisted non-"granted" status to the reason shown to the user. */
+/** Statuses Polar documents as final. Anything else is treated as "cannot tell" (audit P4). */
+export function isFinalNegativeStatus(status: string): boolean {
+  return /^(revoked|disabled|expired|cancelled|canceled)$/i.test(status.trim());
+}
+
 export function reasonForStatus(status: string): 'expired' | 'revoked' | 'invalid' | 'activation-removed' {
   if (status === 'expired') return 'expired';
   if (status === 'not-found') return 'invalid';
@@ -84,6 +91,12 @@ export function decideOffline(state: LicenseState, now: Date, devOverride = fals
   }
   const validatedAge = ageMs(state.lastValidatedAt, now);
   if (validatedAge !== undefined && validatedAge >= 0 && validatedAge < REVALIDATE_HOURS * H) return { pro: true, source: 'validated' };
+  // Revalidation is due, but we already tried recently and could not reach Polar (offline laptop):
+  // keep serving from the grace window instead of hammering the network — and the key travels on
+  // every attempt, which PRIVACY promises happens at most once a day (audit P5).
+  const withinGrace = validatedAge !== undefined && validatedAge >= 0 && validatedAge < GRACE_DAYS * D;
+  const triedRecently = checkedAge !== undefined && checkedAge >= 0 && checkedAge < RETRY_MINUTES * 60_000;
+  if (withinGrace && triedRecently) return { pro: true, source: 'grace' };
   return undefined; // due (or clock skew) → revalidate
 }
 
@@ -112,7 +125,17 @@ export function decideAfterValidation(state: LicenseState, now: Date, result: Va
       next.lastValidatedAt = nowIso;
       return { decision: { pro: true, source: 'validated' }, next };
     }
-    return { decision: { pro: false, reason: result.status === 'expired' || expired ? 'expired' : 'revoked' }, next };
+    if (expired) return { decision: { pro: false, reason: 'expired' }, next };
+    if (!isFinalNegativeStatus(result.status)) {
+      // A status we do not know (a new Polar state, a proxy answering 200 with its own JSON): treat
+      // it as "cannot tell" and let the grace window decide, instead of telling a paying customer
+      // that their key was revoked (audit P4).
+      const soft: LicenseState = { ...state, lastCheckedAt: nowIso };
+      const graceAge = ageMs(state.lastValidatedAt, now);
+      if (graceAge !== undefined && graceAge >= 0 && graceAge < GRACE_DAYS * D) return { decision: { pro: true, source: 'grace' }, next: soft };
+      return { decision: { pro: false, reason: 'network' }, next: soft };
+    }
+    return { decision: { pro: false, reason: reasonForStatus(result.status) }, next };
   }
   if (result.kind === 'invalid' && result.definitive) {
     // Polar said so explicitly. Off now; decideOffline keeps this answer for REVALIDATE_HOURS and then asks again,

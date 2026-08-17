@@ -92,17 +92,46 @@ export class HookInstaller {
     await fs.rm(this.backupsDir, { recursive: true, force: true }).catch(() => undefined);
   }
 
-  /** Writes through symlinks and keeps the previous mode (0600 stays 0600). */
-  private async writeSettings(file: string, data: string): Promise<void> {
+  /**
+   * Writes through symlinks (the user's `~/.claude` is often a symlinked dotfile) and keeps the
+   * previous mode. For a PROJECT file the path is controlled by the repository, so a symlink there
+   * would let a cloned repo redirect our write — and put the token inside a tracked file. In that
+   * case the write is refused (audit P2).
+   */
+  private async writeSettings(file: string, data: string, insideFolder?: string): Promise<void> {
     let target = file;
     let mode: number | undefined;
     try {
       target = await fs.realpath(file);
       mode = (await fs.stat(target)).mode & 0o777;
     } catch {
-      /* new file */
+      // new file: resolve the parent so a symlinked `.claude` directory is still caught
+      try {
+        target = path.join(await fs.realpath(path.dirname(file)), path.basename(file));
+      } catch {
+        /* the directory does not exist yet either */
+      }
+    }
+    if (insideFolder) {
+      const root = await fs.realpath(insideFolder).catch(() => insideFolder);
+      const rel = path.relative(root, target);
+      if (rel.startsWith('..') || path.isAbsolute(rel)) throw new Error(`refusing to write ${target}: it resolves outside ${root} (symlinked .claude?)`);
     }
     await atomicWrite(target, data, mode !== undefined ? { mode } : { mode: 0o600 });
+  }
+
+  /** The real path our project-level write would land on (used for the consent dialog and for git-exclude). */
+  private async realProjectPath(folder: string): Promise<string> {
+    const file = claudeProjectSettingsPath(folder);
+    try {
+      return await fs.realpath(file);
+    } catch {
+      try {
+        return path.join(await fs.realpath(path.dirname(file)), path.basename(file));
+      } catch {
+        return file;
+      }
+    }
   }
 
   /** Consent → backup → write. Returns the file written, or undefined when cancelled/failed. */
@@ -140,7 +169,7 @@ export class HookInstaller {
     if (!next) next = addChangeKeeperHooks(read.settings, this.server.currentPort, await this.server.token()).next;
     try {
       const backup = await this.backup(file, read.raw);
-      await this.writeSettings(file, serialiseSettings(next));
+      await this.writeSettings(file, serialiseSettings(next), target === 'project' ? folder : undefined);
       log(`hooks installed in ${file}${backup ? ` (backup ${backup})` : ''}`);
       if (target === 'project' && folder) await this.ensureGitExcluded(folder, file);
       return file;
@@ -156,6 +185,8 @@ export class HookInstaller {
    * the project's .gitignore). Returns what was done, for the notification and the tests.
    */
   async ensureGitExcluded(folder: string, file: string): Promise<'ignored' | 'excluded' | 'not-git' | 'failed'> {
+    // exclude the path git will actually see (the real one, if `.claude` is a link)
+    file = await this.realProjectPath(folder);
     const check = await git(['check-ignore', '-q', '--', file], folder);
     if (check.code === 0) return 'ignored';
     if (check.code !== 1) return 'not-git';
@@ -189,7 +220,7 @@ export class HookInstaller {
     if (!changed) return true;
     try {
       await this.backup(file, read.raw);
-      await this.writeSettings(file, serialiseSettings(next));
+      await this.writeSettings(file, serialiseSettings(next), target === 'project' ? folder : undefined);
       log(`hooks removed from ${file}`);
       return true;
     } catch (e) {
@@ -198,11 +229,19 @@ export class HookInstaller {
     }
   }
 
-  /** Whether any of the given files (user + projects) holds our hooks — decides whether the receiver must run. */
+  /**
+   * Whether any of the given files holds hooks of OURS — decides whether the receiver must run.
+   * Project files come from the repository, so a clone could otherwise make a user who never
+   * installed anything open a local port: for those, the token must match ours (audit P3).
+   */
   async anyInstalled(folders: string[]): Promise<boolean> {
-    for (const f of [claudeUserSettingsPath(), ...folders.map((x) => claudeProjectSettingsPath(x))]) {
+    const user = await this.readSettings(claudeUserSettingsPath());
+    if (!('error' in user) && installedHooks(user.settings).length) return true;
+    const token = await this.server.peekToken();
+    if (!token) return false;
+    for (const f of folders.map((x) => claudeProjectSettingsPath(x))) {
       const read = await this.readSettings(f);
-      if (!('error' in read) && installedHooks(read.settings).length) return true;
+      if (!('error' in read) && installedHooks(read.settings).some((h) => h.token === token)) return true;
     }
     return false;
   }

@@ -45,6 +45,8 @@ export class FolderGuard implements vscode.Disposable {
   gitCtx: GitContext | undefined;
   starting: Promise<void> | undefined;
   activated = false;
+  /** set by detach()/dispose(): an activation or a start still in flight must not resurrect us (audit V1) */
+  private finished = false;
   /** true while this window owns the folder's session lock (start/resume succeeded) */
   ownsLock = false;
   private readonly fsAdapter = new NodeFs();
@@ -165,8 +167,9 @@ export class FolderGuard implements vscode.Disposable {
   }
 
   private async doActivate(): Promise<void> {
-    if (this.folder.uri.scheme !== 'file') return;
+    if (this.folder.uri.scheme !== 'file' || this.finished) return;
     await this.ensureGit();
+    if (this.finished) return;
     let resumed = false;
     try {
       this.startWatching();
@@ -181,6 +184,11 @@ export class FolderGuard implements vscode.Disposable {
         return;
       }
       log(`[${this.folder.name}] resume failed: ${String(e)}`);
+    }
+    if (this.finished) {
+      if (resumed) await this.engine.detach().catch(() => undefined);
+      this.stopWatching();
+      return;
     }
     if (resumed) {
       this.ownsLock = true;
@@ -232,7 +240,14 @@ export class FolderGuard implements vscode.Disposable {
   private inActivation = false;
 
   private async startInternal(opts: { silent?: boolean; agent?: string; label?: string } = {}): Promise<boolean> {
-    if (this.starting) await this.starting;
+    if (this.starting) {
+      await this.starting;
+      // Two automatic starts raced (e.g. SessionStart and the first PostToolUse of the same agent).
+      // Starting again would re-baseline and swallow everything written during the first baseline,
+      // so an automatic start that finds a live session is done (audit V2).
+      if (opts.silent && this.hasSession) return true;
+    }
+    if (this.finished) return false;
     let ok = false;
     this.starting = (async () => {
       await this.ensureGit();
@@ -242,11 +257,17 @@ export class FolderGuard implements vscode.Disposable {
       this.startWatching();
       this.queueUntilStarted = this.queueUntilStarted ?? new Map();
       const run = async (progress?: vscode.Progress<{ message?: string }>, token?: vscode.CancellationToken) => {
-        await this.engine.start({ agent: opts.agent, label: opts.label, progress: (m) => progress?.report({ message: this.progressText(m) }), cancelled: () => !!token?.isCancellationRequested });
+        await this.engine.start({ agent: opts.agent, label: opts.label, progress: (m) => progress?.report({ message: this.progressText(m) }), cancelled: () => !!token?.isCancellationRequested || this.finished });
       };
       try {
         if (opts.silent) await run();
         else await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: l10n.t('ChangeKeeper: taking a baseline of {0}…', this.folder.name), cancellable: true }, run);
+        if (this.finished) {
+          // the window closed (or the folder was removed) while the baseline was being taken
+          await this.engine.detach().catch(() => undefined);
+          this.stopWatching();
+          return;
+        }
         ok = true;
         this.ownsLock = true;
         this.stoppedByUser = false;
@@ -283,6 +304,8 @@ export class FolderGuard implements vscode.Disposable {
   stoppedByUser = false;
 
   async stop(): Promise<void> {
+    // wait for a start in flight, or it would re-create the session we are stopping (audit V1)
+    if (this.starting) await this.starting.catch(() => undefined);
     await this.engine.stop();
     this.ownsLock = false;
     this.stoppedByUser = true;
@@ -292,6 +315,11 @@ export class FolderGuard implements vscode.Disposable {
 
   /** Window closing / folder removed: keep the session on disk, release the lock. */
   async detach(): Promise<void> {
+    this.finished = true;
+    this.stopWatching();
+    // an activation/start still running would otherwise take the lock again and leave a watcher behind
+    await this.activating?.catch(() => undefined);
+    await this.starting?.catch(() => undefined);
     this.stopWatching();
     await this.engine.detach().catch(() => undefined);
     this.ownsLock = false;
@@ -314,6 +342,7 @@ export class FolderGuard implements vscode.Disposable {
   // ------------------------------------------------------------------------------------------
 
   private startWatching(): void {
+    if (this.finished) return;
     if (this.watching) return;
     this.watching = true;
     const w = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(this.folder, '**/*'));
@@ -530,7 +559,11 @@ export class FolderGuard implements vscode.Disposable {
   }
 
   dispose(): void {
+    this.finished = true;
     this.stopWatching();
+    // whatever is still in flight will see `finished` and undo itself
+    void this.activating?.catch(() => undefined).then(() => this.stopWatching());
+    void this.starting?.catch(() => undefined).then(() => this.stopWatching());
     if (this.changeTimer) clearTimeout(this.changeTimer);
     this._onDidChange.dispose();
   }

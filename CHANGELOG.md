@@ -2,6 +2,27 @@
 
 All notable changes to ChangeKeeper are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] - 2026-08-17
+
+### Fixed
+- **A critical file inside an ignored directory (`.gitignore` = `.vscode/`, `.claude/`…) had no baseline, so it looked added and "Restore file" deleted it.** git reports the whole directory as one entry and never lists the file; those directories are now walked. Same for files inside a nested git repository, which git does not descend into.
+- **The garbage collector could delete the baseline of the session you have open** if `index.json` became unreadable. It now also protects what the running session holds in memory, and does nothing at all when the index does not list that session.
+- A file that cannot be read (locked by another process, antivirus) is no longer reported as **deleted** — that threw away the review you had done and could invent a rename.
+- `Restore` no longer aborts on the first I/O error leaving files already overwritten without an undo record.
+- A file with a UTF-8 BOM and a non-UTF-8 body kept losing its BOM when discarding a hunk.
+- Discarding a hunk kept the file's POSIX mode (a script stayed executable) and, on a read-only file, reports a clear message instead of throwing after four seconds.
+- With `core.autocrlf`, rewriting a CRLF file with LF endings is no longer reported as "no change".
+- A file open in the editor with an encoding VS Code decodes differently (UTF-16, legacy code pages) no longer shows phantom changes.
+- Two automatic starts racing (an agent's session start plus its first edit) created two sessions, and the second one swallowed everything written during the first baseline.
+- Closing a window or removing a folder in the middle of a session start no longer leaves a file watcher and the folder lock behind.
+- "Accept/Discard hunk at cursor" now works from the baseline (left) side of the diff; "Review all changes" shows renames against their source instead of an empty file.
+- The secret scanner no longer skips lines longer than 1000 characters (a private key pasted on one line went unnoticed); the folder lock is taken exclusively; several listeners and timers that outlived `dispose()` are gone.
+
+### Security
+- The internal test commands are no longer registered in production: another installed extension could call them and read the Pro licence key and the hook token.
+- Installing project hooks refuses to write through a symlink that leaves the workspace (a cloned repository could redirect the write, or get the token into a tracked file), and a repository that ships `.claude/settings.local.json` no longer makes the local receiver start for someone who never installed hooks.
+- An unknown licence status from the payment provider is treated as "cannot tell" (grace) instead of a revocation, and a failed check is not retried every minute while offline.
+
 ## [0.2.1] - 2026-08-16
 
 ### Added
@@ -11,7 +32,7 @@ All notable changes to ChangeKeeper are documented here. The format follows [Kee
 ## [0.2.0] - 2026-08-16
 
 ### Added
-- **Pro tier** (7 €, one-time, licence key via Polar): validations after review (confirmed per command and per resolved package.json script, exact exit codes, never in Restricted Mode), local secret scanner over added lines (redacted findings in tree and report), commit message straight into the SCM input box, **agent hooks** (opt-in HTTP hooks for Claude Code — `SessionStart` + `PostToolUse` — with consent/backup/revert/doctor; project scope by default and git-excluded; per-user token; lazy local receiver, one owner window per machine; files tagged with the agent that edited them; `autoStart: whenAgentDetected`), licence commands (enter key, status, deactivate, buy). Everything Pro adds can be removed without a licence; the user-level hooks are also removed on uninstall (`vscode:uninstall`).
+- **Pro tier** (7 €, one-time, licence key via Polar): validations after review (confirmed per command and per resolved package.json script, exact exit codes, never in Restricted Mode), local secret scanner over added lines (redacted findings in tree and report), commit message straight into the SCM input box, **agent hooks** (opt-in HTTP hooks for Claude Code — `SessionStart`, `UserPromptSubmit` and `PostToolUse` — with consent/backup/revert/doctor; project scope by default and git-excluded; per-user token; lazy local receiver, one owner window per machine; files tagged with the agent that edited them; `autoStart: whenAgentDetected`), licence commands (enter key, status, deactivate, buy). Everything Pro adds can be removed without a licence; the user-level hooks are also removed on uninstall (`vscode:uninstall`).
 - Discarding a hunk on disk (closed document) now keeps the previous bytes: it can be undone with **Undo last restore**.
 - Renamed files diff against the baseline of their source; CodeLens sits on the first changed line; accept/discard at cursor work from the baseline side of the diff too.
 

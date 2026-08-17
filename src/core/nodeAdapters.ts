@@ -43,9 +43,22 @@ export class NodeFs implements FsAdapter {
     }
   }
 
+  /**
+   * Atomic write that preserves the mode of the file being replaced (temp file + rename would
+   * otherwise reset it to the umask default and, for instance, make a script non-executable — C9).
+   * An explicit `mode` wins (used when the baseline says the file was 100755).
+   */
   async writeFile(abs: string, data: Buffer, mode?: number): Promise<void> {
+    let keep: number | undefined;
+    if (mode === undefined && process.platform !== 'win32') {
+      keep = await fs
+        .stat(abs)
+        .then((st) => st.mode & 0o777)
+        .catch(() => undefined);
+    }
     await atomicWrite(abs, data);
-    if (mode !== undefined && process.platform !== 'win32') await fs.chmod(abs, mode).catch(() => undefined);
+    const want = mode ?? keep;
+    if (want !== undefined && process.platform !== 'win32') await fs.chmod(abs, want).catch(() => undefined);
   }
 
   async unlink(abs: string): Promise<void> {

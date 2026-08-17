@@ -28,8 +28,15 @@ function main(): void {
   const { next, changed } = removeChangeKeeperHooks(settings);
   if (!changed) return;
   try {
-    fs.writeFileSync(file + '.changekeeper-uninstall.bak', raw);
-    fs.writeFileSync(file, serialiseSettings(next));
+    // keep the mode of the settings file: the backup holds the same secrets (and PRIVACY says 0600)
+    let mode = 0o600;
+    try {
+      mode = fs.statSync(file).mode & 0o777;
+    } catch {
+      /* keep the default */
+    }
+    fs.writeFileSync(file + '.changekeeper-uninstall.bak', raw, { mode });
+    fs.writeFileSync(file, serialiseSettings(next), { mode });
   } catch {
     /* ignore */
   }

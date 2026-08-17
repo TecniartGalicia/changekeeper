@@ -21,7 +21,14 @@ async function main(): Promise<void> {
 
   // a fresh copy of the demo workspace every run, so the recording is reproducible
   const src = process.env.CK_DEMO_SRC!;
+  if (!src || !fs.existsSync(src) || !fs.statSync(src).isDirectory()) throw new Error(`CK_DEMO_SRC must point at the demo workspace (got ${JSON.stringify(src)})`);
   const ws = path.join(out, 'shop-api'); // the folder name shows in the title bar and the explorer
+  // the destination is wiped on every run, so make very sure it is not (or does not contain) the source
+  const inside = (a: string, b: string) => {
+    const rel = path.relative(a, b);
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  };
+  if (inside(ws, path.resolve(src)) || inside(path.resolve(src), ws)) throw new Error(`refusing to wipe ${ws}: it overlaps CK_DEMO_SRC (${src})`);
   fs.rmSync(ws, { recursive: true, force: true });
   fs.cpSync(src, ws, { recursive: true });
   fs.rmSync(path.join(ws, '.git'), { recursive: true, force: true });

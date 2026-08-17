@@ -37,12 +37,19 @@ const KIND_ICON: Record<FileChange['kind'], [string, string]> = {
   R: ['diff-renamed', 'gitDecoration.renamedResourceForeground'],
 };
 
-export class ChangesTree implements vscode.TreeDataProvider<Node> {
+export class ChangesTree implements vscode.TreeDataProvider<Node>, vscode.Disposable {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<Node | undefined>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+  private readonly sub: vscode.Disposable;
 
   constructor(private readonly manager: GuardManager) {
-    manager.onDidChange(() => this._onDidChangeTreeData.fire(undefined));
+    this.sub = manager.onDidChange(() => this._onDidChangeTreeData.fire(undefined));
+  }
+
+  /** Registering the provider only unregisters it; the listener and the emitter are ours to free (audit V10). */
+  dispose(): void {
+    this.sub.dispose();
+    this._onDidChangeTreeData.dispose();
   }
 
   refresh(): void {

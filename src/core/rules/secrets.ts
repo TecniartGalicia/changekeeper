@@ -38,8 +38,11 @@ const PLACEHOLDER = /(example|placeholder|your[_-]?|xxx|changeme|<[^>]+>|\$\{|%s
 /** Scans lines (with their 1-based numbers) and returns redacted findings. */
 export function scanSecrets(lines: { line: number; text: string }[]): SecretFinding[] {
   const out: SecretFinding[] = [];
-  for (const { line, text } of lines) {
-    if (text.length > 1000) continue; // minified / data lines: skip (also bounds regex cost)
+  for (const { line: lineNo, text: raw } of lines) {
+    const line = lineNo;
+    // long lines (minified bundles, a PEM key pasted on one line) are trimmed, not skipped: the
+    // interesting part of a secret is at the start of the value, and the cost stays bounded (C10)
+    const text = raw.length > 1000 ? raw.slice(0, 1000) : raw;
     for (const p of SECRET_PATTERNS) {
       const m = p.re.exec(text);
       if (!m) continue;

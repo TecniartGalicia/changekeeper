@@ -20,6 +20,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const t0 = Date.now();
   manager = new GuardManager(context);
   const tree = new ChangesTree(manager);
+  // registering a provider only unregisters it: the objects themselves must be disposed too (audit V10)
+  const lens = new HunkCodeLensProvider(manager);
+  context.subscriptions.push(tree);
   const commands = new ReviewCommands(manager);
   const reports = new ReportCommands(manager);
   const provider = new BaselineContentProvider(manager);
@@ -46,7 +49,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.window.createTreeView('changekeeper.changes', { treeDataProvider: tree, showCollapseAll: true }),
     vscode.workspace.registerTextDocumentContentProvider(BASELINE_SCHEME, provider),
     vscode.workspace.registerTextDocumentContentProvider(EMPTY_SCHEME, new EmptyContentProvider()),
-    vscode.languages.registerCodeLensProvider({ scheme: 'file' }, new HunkCodeLensProvider(manager)),
+    lens,
+    vscode.languages.registerCodeLensProvider({ scheme: 'file' }, lens),
     vscode.commands.registerCommand('changekeeper.startSession', wrap('start session', (a) => commands.startSession(a))),
     vscode.commands.registerCommand('changekeeper.stopSession', wrap('stop session', (a) => commands.stopSession(a))),
     vscode.commands.registerCommand('changekeeper.refresh', wrap('refresh', () => tree.refresh())),
@@ -67,11 +71,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('changekeeper.showReport', wrap('report', () => reports.show())),
     vscode.commands.registerCommand('changekeeper.exportReport', wrap('export report', () => reports.export())),
     vscode.commands.registerCommand('changekeeper.copyCommitMessage', wrap('copy commit message', () => reports.copyCommitMessage())),
-    // internal, for tests
-    vscode.commands.registerCommand('changekeeper._manager', () => manager),
-    vscode.commands.registerCommand('changekeeper._reports', () => reports),
-    vscode.commands.registerCommand('changekeeper._pro', () => pro),
   );
+
+  // Internal handles for the integration suite. They are NOT registered in production: a command
+  // registered in the same extension host returns the live object, so any other installed extension
+  // could reach the licence key in SecretStorage or the hook token through them (audit P1).
+  if (context.extensionMode === vscode.ExtensionMode.Test) {
+    context.subscriptions.push(
+      vscode.commands.registerCommand('changekeeper._manager', () => manager),
+      vscode.commands.registerCommand('changekeeper._reports', () => reports),
+      vscode.commands.registerCommand('changekeeper._pro', () => pro),
+    );
+  }
 
   await manager.initialize();
   log(`activated in ${Date.now() - t0} ms (git detection and session resume continue in the background)`);

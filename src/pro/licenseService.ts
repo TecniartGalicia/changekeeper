@@ -57,7 +57,10 @@ export function invalidateProCache(): void {
 /** Decides Pro status: offline first, network (throttled) only when needed. Never throws. */
 export async function proStatus(context: vscode.ExtensionContext, force = false): Promise<ProDecision> {
   if (!force && cached && Date.now() - cached.at < 60_000) return cached.decision;
-  if (inflight) return inflight;
+  // a forced check (the "Licence status" command) must really hit the network, not join a
+  // background check that may already be past the fetch (audit P10)
+  if (inflight && !force) return inflight;
+  if (inflight && force) await inflight.catch(() => undefined);
   inflight = (async () => {
     try {
       const now = new Date();

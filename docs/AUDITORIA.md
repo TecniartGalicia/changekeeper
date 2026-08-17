@@ -299,3 +299,61 @@ Antes de publicar la 0.2.0 se ejecutó de principio a fin el camino que hará un
 Nota de método: una ráfaga de llamadas seguidas a Polar puede devolver un error transitorio (429); el código lo trata como «temporal» (mantiene la gracia offline) en vez de bloquear al cliente, que es el comportamiento seguro. Repetida la misma llamada aislada, el resultado es el definitivo que se esperaba.
 
 **Publicación de la 0.2.0 (2026-08-16):** tag `v0.2.0` → workflow `Release` en verde (guarda de Polar superada, `npm run check`, l10n, empaquetado) → **Marketplace** (`Published argalla.changekeeper v0.2.0`, visible ~6 min después y ya con el distintivo *trial*), **Open VSX** (visible en ~1 min) y **GitHub Release** con `changekeeper-v0.2.0.vsix`. Instalada desde la tienda en el equipo del autor.
+
+## Auditoría de la 0.2.1 (código ya publicado) — 2026-08-17
+
+Tres revisores independientes, en paralelo y sin contexto de la implementación, sobre `9a63d4d`: **núcleo** (`src/core/**`), **capa VS Code** (`src/vscode/**`, `src/extension.ts`, `package.json`) y **pago, hooks y entrega** (licencia, Polar, hooks, empaquetado, workflows, textos públicos). Cada uno con repros ejecutables: fuzz de 48.000 casos sobre los hunks, sondas HTTP contra el receptor, ficheros bloqueados de verdad con handles exclusivos de Windows, repos anidados, `git worktree`, `core.autocrlf`, adaptadores instrumentados y una ejecución propia en VS Code 1.133. **35 hallazgos (6 altos), todos aplicados** en la 0.2.2.
+
+### Pérdida de datos (lo que más duele)
+
+| # | Sev. | Hallazgo | Arreglo |
+|---|------|----------|---------|
+| C1 | **Alta** | **Un fichero crítico dentro de un directorio ignorado no tenía línea base y «Restaurar» lo BORRABA.** Con `.gitignore` = `.vscode/`, git colapsa el directorio (`! .vscode/`) y nunca lista `.vscode/settings.json`, así que el fichero del usuario aparecía como añadido. Afecta a la forma más común de ignorar: `.vscode/`, `.claude/`, `.idea/` | Las entradas ignoradas que terminan en `/` se recorren (`expandDir`, saltando directorios pesados y con tope de 2.000 entradas) y los críticos de dentro entran en la línea base. Test de regresión |
+| C2 | **Alta** | **Un repositorio git anidado (no submódulo) hacía invisible todo su contenido** — git reporta `vendorlib/` como una sola entrada sin descender — y «Restaurar» borraba ficheros que existían antes de la sesión | Las entradas sin seguimiento que terminan en `/` también se recorren; nunca se escriben filas de línea base cuya ruta acabe en `/`. Test de regresión |
+| C3 | **Alta** | **Con `index.json` ilegible, el recolector de basura borraba los blobs de la sesión EN CURSO** (la línea base desaparecía en silencio: restaurar pasaba a decir «perdido») | El GC añade a lo referenciado lo que la sesión viva tiene en memoria y, si el índice no menciona esa sesión, no borra nada. Test de regresión |
+| C4 | Media | `restore()` abortaba al primer error de E/S dejando ficheros ya pisados **sin registro de deshacer** | Todo el cuerpo del bucle va dentro del `try`: un fallo marca esa ruta como omitida y el resto continúa con su registro |
+| C5 | Media | **«No se puede leer» se confundía con «borrado»**: un antivirus o un proceso con el fichero abierto en Windows producía una D falsa que tiraba la revisión hecha (y podía inventar un renombrado) | `readCurrent` distingue el caso: si `stat` ve el fichero pero la lectura falla, se conserva el estado anterior y se reintenta. Test de regresión |
+| C6 | Media | Un fichero con **BOM UTF-8 y cuerpo no UTF-8** perdía el BOM al descartar un bloque (el round-trip no era biyectivo) | `decodeText`/`encodeText` conservan el BOM también en la rama latin1. Test de bytes idénticos |
+
+### Corrección y experiencia
+
+| # | Sev. | Hallazgo | Arreglo |
+|---|------|----------|---------|
+| V1 | **Alta** | Sin bandera de cancelación: un `stop()`/`detach()`/`dispose()` que caía a mitad de una activación **se deshacía solo** — quedaba un watcher vivo para siempre y el lock escrito, y otras ventanas veían «ya vigilada por otra ventana» hasta cerrar VS Code | `FolderGuard` tiene `finished`, como ya tenía el receptor de hooks: se comprueba en cada punto de espera, `stop()` espera al arranque en vuelo y `detach()/dispose()` esperan y limpian |
+| V2 | **Alta** | **Dos `start()` concurrentes creaban dos sesiones**, y la segunda re-baselinizaba: lo que el agente escribía durante la primera línea base entraba en la nueva base y **no se vigilaba nunca**. Es justo el flujo de `autoStart: whenAgentDetected` (SessionStart + primer PostToolUse) | Un arranque automático que, tras esperar al que está en curso, encuentra sesión viva, no vuelve a empezar |
+| V3 | Media | Mismo patrón de fuga que se arregló en los hooks: el temporizador del GC y el aviso de primera ejecución se creaban **después** del `dispose()` (esto fue lo que colgó el CI en F6) | `GuardManager` comprueba `disposed` en cada punto de reanudación |
+| V4 | Media | La misma validación `afterReview` podía lanzarse **dos veces en paralelo** (la firma se marcaba después del `await` de la licencia) | La firma se reclama antes de esperar |
+| V5 | Media | «Aceptar/Descartar bloque en el cursor» **no hacía nada** con el cursor en el lado izquierdo del diff (`ck-baseline:`), que es justo donde apuntan sus entradas de menú | Ese lado se resuelve con `parseBaselineUri` y se mapea por las líneas de la línea base |
+| V6 | Media | «Revisar todos los cambios» pintaba los **renombrados contra vacío** (el fichero entero como añadido) | El multi-diff compara contra el origen del renombrado, como ya hacía «Abrir diff» |
+| V7 | Baja | La clave `burstPaused` se quedaba obsoleta tras una sesión nueva o un stop | Es un estado derivado más, calculado junto a los otros cuatro |
+| V8 | Baja | Los comandos de informe elegían carpeta sin filtrar y contestaban «no hay sesión» aunque otra carpeta sí tuviera | Se filtra por carpetas con sesión |
+| V9 | Baja | Fuga de listener/temporizador en el camino de expiración de una validación, y el temporizador se armaba antes de tener nada que terminar | Se arma tras `executeTask` y ambos se liberan siempre |
+| V10 | Baja | `ChangesTree` y el proveedor de CodeLens no se liberaban (registrar un proveedor solo lo desregistra) | Ambos van a `context.subscriptions`; `ChangesTree` implementa `Disposable` |
+| C9 | Media | Toda escritura reemplazaba el fichero por uno nuevo: **se perdía el modo POSIX** (descartar un bloque de un script lo dejaba sin permiso de ejecución) | El adaptador conserva el modo del fichero que sustituye |
+| C10 | Baja | El escáner de secretos **saltaba entera** cualquier línea de más de 1.000 caracteres: una clave privada pegada en una línea no se detectaba | Se escanean los primeros 1.000 caracteres en vez de descartar la línea |
+| C11 | Baja | `acquireLock` era un TOCTOU: dos ventanas simultáneas se creían ambas dueñas | Creación exclusiva (`wx`) con relectura, como el token de hooks |
+| C12 | Baja | Descartar un bloque en un fichero de solo lectura **lanzaba una excepción** tras ~3,7 s | Devuelve `io` con el motivo y un mensaje claro; el resto de bloques siguen |
+| C7 | Media | Un fichero abierto con una codificación no modelada (UTF-16, cp1252) mostraba **cambios fantasma**, y descartar habría reescrito el fichero entero en UTF-8 | Un buffer limpio es, por definición, el disco: se leen los bytes reales |
+| C8 | Media | Con `core.autocrlf`, reescribir un fichero CRLF con LF se reportaba como «sin cambios» | La vía rápida por OID del índice se desactiva cuando git puede filtrar los bytes |
+
+### Pago, hooks y entrega
+
+| # | Sev. | Hallazgo | Arreglo |
+|---|------|----------|---------|
+| P1 | **Alta** | Los comandos internos de test (`changekeeper._pro`…) se registraban **en producción** y devuelven el objeto vivo: **otra extensión instalada podía leer la clave de licencia y el token de los hooks**, saltándose el aislamiento de SecretStorage | Se registran solo con `ExtensionMode.Test` |
+| P2 | Media | En ámbito proyecto, `.claude/settings.local.json` es una ruta que controla el repositorio: un enlace simbólico podía redirigir nuestra escritura fuera del espacio de trabajo o **meter el token en un fichero versionado** | La escritura de proyecto exige que la ruta real quede dentro de la carpeta; el `.git/info/exclude` usa la ruta real |
+| P3 | Media | Un repositorio **clonado** que trajera ese fichero hacía que un usuario gratuito, que nunca instaló hooks, **abriera el puerto local** | Para ficheros de proyecto se exige que el token sea el nuestro |
+| P4 | Media | Cualquier `status` desconocido de Polar (un estado nuevo, un proxy que responde 200) se trataba como **revocación**: todos los clientes de pago perderían Pro | Lista blanca explícita; lo desconocido es «no se puede saber» y respeta la gracia |
+| P5 | Media | Sin conexión se reintentaba la licencia **cada 60 s** (361 intentos en 6 h), enviando la clave cada vez, contra el «como mucho una vez al día» que promete PRIVACY | Freno de 30 minutos apoyado en la ventana de gracia |
+| P6 | Baja | Los textos decían «dos hooks»; se instalan **tres** (`UserPromptSubmit` entró en F5 y no se propagó) | Corregido en README EN/ES y CHANGELOG, aclarando que el texto del prompt nunca se lee |
+| P7 | Baja | PRIVACY afirmaba que nada propio se escribe en el repositorio; el instalador de hooks escribe `.claude/settings.local.json` y toca `.git/info/exclude` | Excepción documentada en ambos idiomas |
+| P8 | Baja | La copia de seguridad del desinstalador nacía 0644 aunque PRIVACY promete 0600 | Hereda el modo del fichero de ajustes |
+| P9 | Baja | `ignore` figuraba como dependencia y en el aviso de terceros **sin usarse** | Retirada de ambos |
+| P10 | Baja | «Estado de la licencia» podía colgarse de una comprobación en vuelo y no tocar la red pese al indicador de progreso | Un chequeo forzado espera y lanza uno nuevo |
+| P11 | Baja | El token de Open VSX viajaba por `argv` en el workflow | Se lee de la variable de entorno |
+
+**Encontrado por mí durante los arreglos:** el guion de grabación (`npm run demo`) borraba su directorio destino sin comprobar que no fuese (ni contuviese) el de origen — me borró el workspace de demo una vez. Ahora valida ambos.
+
+**Verificado OK por los revisores:** el modelo de hunks aguanta 48.000 casos de fuzz con EOL mixtos y sin salto final devolviendo la línea base byte a byte; el timeout de 500 ms funciona y degrada bien; la materialización por OID sobrevive a cambios de rama, `worktree`, HEAD sin nacer, `working-tree-encoding` y BOM; rutas largas de Windows; el receptor de hooks rechaza sin token antes de leer el cuerpo (403 en OPTIONS, 413, 400, respuesta siempre vacía) y no acepta traversal; el `.vsix` no lleva fuentes, docs ni mapas; `release.yml` fija las actions por SHA y su guarda de Polar bloquea de verdad; lo que se envía a Polar coincide con lo documentado; no hay telemetría; «quitar Pro es gratis» se cumple; y un reloj atrasado no tira a un cliente de pago.
+
+**Dejado a propósito:** `expectOwnWrite` es código muerto (no rompe nada, se retirará); `planGc` cuenta dos veces los blobs compartidos al aplicar el tope de tamaño (tira alguna sesión cerrada de más, nunca datos vivos); una sesión huérfana tras un cierre abrupto no entra en la retención; el fingerprint de validaciones no sigue scripts anidados (ya matizado en el README).

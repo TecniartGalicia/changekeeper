@@ -43,12 +43,16 @@ export function decodeText(buf: Buffer): { text: string; bom: boolean; encoding:
   try {
     return { text: utf8Fatal.decode(body), bom, encoding: 'utf8' };
   } catch {
-    return { text: body.toString('latin1'), bom: false, encoding: 'latin1' };
+    // the BOM was already stripped from `body`; report it so encodeText can put it back (audit C6)
+    return { text: body.toString('latin1'), bom, encoding: 'latin1' };
   }
 }
 
 export function encodeText(text: string, bom: boolean, encoding: TextEncoding = 'utf8'): Buffer {
-  if (encoding === 'latin1') return Buffer.from(text, 'latin1');
+  if (encoding === 'latin1') {
+    const raw = Buffer.from(text, 'latin1');
+    return bom ? Buffer.concat([UTF8_BOM, raw]) : raw;
+  }
   const body = Buffer.from(text, 'utf8');
   return bom ? Buffer.concat([UTF8_BOM, body]) : body;
 }

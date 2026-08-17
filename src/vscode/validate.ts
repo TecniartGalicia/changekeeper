@@ -178,12 +178,17 @@ export class ValidationRunner implements vscode.Disposable {
       }
     });
     let taskExecution: vscode.TaskExecution | undefined;
-    const timer = setTimeout(() => {
-      taskExecution?.terminate();
-      done({ status: 'timeout' });
-    }, rule.timeoutSec * 1000);
+    let timedOut = false;
+    // armed after executeTask resolves, or a slow Task API would "time out" before we have anything
+    // to terminate; the listener and the timer are always freed below (audit V9)
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       taskExecution = await vscode.tasks.executeTask(task);
+      timer = setTimeout(() => {
+        timedOut = true;
+        taskExecution?.terminate();
+        done({ status: 'timeout' });
+      }, rule.timeoutSec * 1000);
     } catch (e) {
       clearTimeout(timer);
       sub.dispose();
@@ -195,7 +200,9 @@ export class ValidationRunner implements vscode.Disposable {
       return;
     }
     const r = await finished;
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
+    sub.dispose(); // a terminated CustomExecution may never emit onDidEndTaskProcess
+    if (timedOut) taskExecution?.terminate();
     run.exitCode = r.exitCode;
     run.status = r.status;
     run.durationMs = Date.now() - t0;
@@ -231,9 +238,11 @@ export class ValidationRunner implements vscode.Disposable {
       const sig = `${guard.engine.session!.id}:${c.hunks}:${c.accepted}:${c.discarded}:${c.files}`;
       if (this.lastAutoRunKey.get(guard.folder.uri.toString()) === sig) continue;
       if (this.criticalPending(guard) || !vscode.workspace.isTrusted) continue;
+      // claim the signature BEFORE the await: two onDidChange landing either side of the licence
+      // check would both pass the filter and run the same command twice in parallel (audit V4)
+      this.lastAutoRunKey.set(guard.folder.uri.toString(), sig);
       const pro = await ensureProSilent(this.context);
       if (!pro) continue;
-      this.lastAutoRunKey.set(guard.folder.uri.toString(), sig);
       for (const rule of rules) await this.runRule(guard, rule, 'afterReview', true);
     }
   }

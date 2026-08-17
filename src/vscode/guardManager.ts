@@ -43,12 +43,15 @@ export class GuardManager implements vscode.Disposable {
     for (const f of folders) await this.addFolder(f, false);
     void (async () => {
       for (const g of [...this.guards.values()]) {
+        if (this.disposed) return;
         try {
           await g.activate();
         } catch (e) {
           log(`[${g.folder.name}] activate failed: ${String(e)}`);
         }
       }
+      // the extension may have been disposed while we were activating: no timer, no popup (audit V3)
+      if (this.disposed) return;
       this.fire();
       void this.maybeFirstRunNotice();
       this.scheduleGc();
@@ -126,6 +129,10 @@ export class GuardManager implements vscode.Disposable {
     const hasChanges = this.all().some((g) => g.hasSession && g.engine.changes().length > 0);
     const canUndo = this.all().some((g) => g.hasSession && !!g.engine.lastUndoableRestore());
     const hasReport = this.all().some((g) => !!g.engine.session);
+    // derived, like the others: setting it only where the burst pauses left it stale after a new
+    // session or a stop, so "Resume burst" stayed in the palette with nothing paused (audit V7)
+    const burstPaused = this.all().some((g) => g.hasSession && g.engine.burst.paused);
+    void vscode.commands.executeCommand('setContext', 'changekeeper.burstPaused', burstPaused);
     void vscode.commands.executeCommand('setContext', 'changekeeper.hasReport', hasReport);
     void vscode.commands.executeCommand('setContext', 'changekeeper.hasSession', hasSession);
     void vscode.commands.executeCommand('setContext', 'changekeeper.hasChanges', hasChanges);
@@ -152,9 +159,12 @@ export class GuardManager implements vscode.Disposable {
     // GC runs a while after activation, never during it, only for stores this window may touch, and
     // never against the active session
     if (this.gcTimer) clearTimeout(this.gcTimer);
+    if (this.disposed) return;
     this.gcTimer = setTimeout(async () => {
+      if (this.disposed) return;
       const r = readRetention();
       for (const g of this.all()) {
+        if (this.disposed) return;
         try {
           if (!(await g.mayTouchStore())) continue;
           const res = await g.engine.gc(r.days, r.maxBytes);
@@ -170,7 +180,10 @@ export class GuardManager implements vscode.Disposable {
     for (const g of this.guards.values()) await g.detach();
   }
 
+  private disposed = false;
+
   dispose(): void {
+    this.disposed = true;
     if (this.gcTimer) clearTimeout(this.gcTimer);
     for (const d of this.disposables) d.dispose();
     for (const g of this.guards.values()) g.dispose();

@@ -10,8 +10,9 @@ import { GuardManager } from './guardManager';
 export class ReportCommands {
   constructor(private readonly manager: GuardManager) {}
 
+  /** Only folders with a session can produce a report: picking any other one answers "nothing to report" wrongly (audit V8). */
   private async pick(): Promise<FolderGuard | undefined> {
-    const g = await this.manager.pickGuard();
+    const g = await this.manager.pickGuard((x) => !!x.engine.session);
     if (!g || !g.engine.session) {
       void vscode.window.showInformationMessage(l10n.t('ChangeKeeper: no session to report on.'));
       return undefined;

@@ -85,6 +85,8 @@ interface CurrentRead {
   tooLarge?: boolean;
   open: boolean;
   encoding: TextEncoding;
+  /** the file is there but could not be read (locked by another process on Windows, permissions…) */
+  unreadable?: boolean;
 }
 
 export interface DiscardPlan {
@@ -119,6 +121,8 @@ export class Engine {
   private viewCache = new Map<string, FileView>();
   private writingOurselves = new Map<string, string>(); // pathKey → sha we are writing (suppression)
   private agentTouches = new Map<string, string>(); // pathKey → agent tag reported by a hook
+  /** true when git may rewrite bytes between the blob and the working tree (autocrlf / eol attributes): the fast path is unsafe then (audit C8) */
+  private gitMayFilter = false;
   readonly burst: BurstDetector;
   burstQueue: string[] = [];
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
@@ -298,9 +302,38 @@ export class Engine {
   // baseline construction
   // ------------------------------------------------------------------------------------------
 
+  /**
+   * Lists the files inside a directory git reported as a single entry (an ignored directory, or a
+   * nested repository it will not descend into). Heavy/hard directories are skipped and the number
+   * of entries is capped, so expanding `node_modules/` cannot turn the baseline into a full scan.
+   */
+  private async expandDir(relDir: string, cap = 2000): Promise<string[]> {
+    const clean = relDir.replace(/\/+$/, '');
+    if (!clean || this.deps.rules.skipDir(clean)) return [];
+    const out: string[] = [];
+    try {
+      for await (const f of this.deps.fs.walk(fromRelPosix(this.folder, clean), (dir) => this.deps.rules.skipDir(`${clean}/${dir}`))) {
+        out.push(`${clean}/${f.rel}`);
+        if (out.length >= cap) {
+          this.log(`baseline: ${clean} has more than ${cap} entries; the rest are not in the baseline`);
+          break;
+        }
+      }
+    } catch (e) {
+      this.log(`baseline: could not list ${clean}: ${String(e)}`);
+    }
+    return out;
+  }
+
   private async buildGitBaseline(manifest: BaselineManifest, opts: { progress?: (msg: string) => void; cancelled?: () => boolean }): Promise<void> {
     const git = this.deps.git!;
     const limits = this.deps.limits;
+    // `core.autocrlf` (and text/eol attributes) make the working-tree bytes differ from the blob,
+    // so the "same oid ⇒ unchanged" fast path would miss a CRLF→LF rewrite (audit C8)
+    const cfg = await git.run(['config', '--get', 'core.autocrlf']).catch(() => undefined);
+    const auto = cfg && cfg.code === 0 ? cfg.stdout.toString('utf8').trim().toLowerCase() : '';
+    this.gitMayFilter = auto === 'true' || auto === 'input';
+    if (this.gitMayFilter) this.log(`git core.autocrlf=${auto}: the index-oid fast path is disabled for this session`);
     opts.progress?.('index');
     const head = await git.run(['rev-parse', 'HEAD']);
     manifest.head = parseHead(head.stdout.toString('utf8'));
@@ -344,12 +377,24 @@ export class Engine {
     for (const e of first) {
       if (inSubmodule(e.path)) continue;
       if (e.kind === 'ignored') {
-        // `--ignored=matching` lists ignored files (and whole ignored dirs with a trailing slash)
-        if (e.path.endsWith('/')) continue;
+        // `--ignored=matching` lists ignored files, and whole ignored directories with a trailing
+        // slash (`.gitignore` = `.vscode/` never lists `.vscode/settings.json`). Walk those so a
+        // critical file inside one still gets a baseline: without it, it would look added and
+        // "restore" would delete a file the user had before the session (audit C1).
+        if (e.path.endsWith('/')) {
+          for (const inner of await this.expandDir(e.path)) if (this.deps.rules.isCritical(inner)) toCopy.push(inner);
+          continue;
+        }
         if (this.deps.rules.isCritical(e.path)) toCopy.push(e.path);
         continue;
       }
       if (e.kind === 'untracked') {
+        // git does not descend into a nested repository: it reports `vendor/` as one untracked
+        // entry. Walk it, or everything inside would look added and "restore" would delete it (C2).
+        if (e.path.endsWith('/')) {
+          for (const inner of await this.expandDir(e.path)) if (this.deps.rules.decide(inner, false).watch) toCopy.push(inner);
+          continue;
+        }
         const d = this.deps.rules.decide(e.path, false);
         if (!d.watch) continue;
         toCopy.push(e.path);
@@ -680,7 +725,9 @@ export class Engine {
     const row = this.baselineRow(rel);
     // Fast path: a clean tracked file re-saved with identical bytes matches its index blob without
     // materialising anything (exact only for SHA-1 OIDs; otherwise we fall through to the byte comparison).
-    if (current.exists && current.bytes && row && row[1] === 'git-blob' && row[2].length === 40 && !this.materialized[rel] && gitBlobSha1(current.bytes) === row[2]) {
+    // With `core.autocrlf` (or a text/eol attribute) the working-tree bytes are NOT the blob bytes,
+    // so a CRLF→LF rewrite would hash equal to the index and look like "no change" (audit C8).
+    if (!this.gitMayFilter && current.exists && current.bytes && row && row[1] === 'git-blob' && row[2].length === 40 && !this.materialized[rel] && gitBlobSha1(current.bytes) === row[2]) {
       return this.dropChange(k, existing);
     }
     const base = await this.resolveBaseline(rel);
@@ -712,6 +759,11 @@ export class Engine {
       return ch;
     }
     // ---- exists now
+    if (current.unreadable) {
+      // keep whatever we knew about the file; retry on the next event instead of inventing a state
+      this.log(`${rel}: could not be read (locked?); keeping the previous state`);
+      return existing;
+    }
     if (base.kind === 'bytes' && current.sha === base.sha) return this.dropChange(k, existing);
     const ch: FileChange = existing ?? { path: rel, kind: 'A', critical: w.critical, hunks: {}, firstSeenAt: nowIso, lastChangeAt: nowIso };
     ch.path = rel;
@@ -817,7 +869,10 @@ export class Engine {
 
   private async readCurrent(rel: string, abs: string): Promise<CurrentRead> {
     const doc = this.deps.openDoc(rel);
-    if (doc) {
+    // A clean editor buffer is, by definition, what is on disk — and re-encoding it can differ from
+    // the real bytes when VS Code read the file with an encoding we do not model (UTF-16, cp1252…),
+    // which used to show phantom changes and offer hunks that would rewrite the whole file (C7).
+    if (doc && doc.dirty) {
       // The editor buffer is the truth for open documents. Encode it the way the disk file is encoded
       // (BOM / latin1 round-trip) so hashes line up with disk and baseline bytes.
       const disk = await this.deps.fs.readFile(abs);
@@ -841,7 +896,10 @@ export class Engine {
       return { exists: true, sha: big ? sha256(big) : `size:${stat.size}:${stat.mtimeMs}`, tooLarge: true, open: false, encoding: 'utf8' };
     }
     const bytes = await this.deps.fs.readFile(abs);
-    if (!bytes) return { exists: false, sha: '', open: false, encoding: 'utf8' };
+    // stat() saw a file but the read failed (an antivirus or another process holds an exclusive
+    // handle): that is NOT a deletion. Saying "deleted" here throws away the review of the file and
+    // can even turn another added file into a bogus rename (audit C5).
+    if (!bytes) return { exists: true, sha: `unreadable:${stat.size}:${stat.mtimeMs}`, open: false, encoding: 'utf8', unreadable: true };
     if (looksBinary(bytes)) return { exists: true, bytes, sha: sha256(bytes), binary: true, open: false, encoding: 'utf8' };
     const d = decodeText(bytes);
     return { exists: true, bytes, text: d.text, sha: sha256(bytes), open: false, encoding: d.encoding };
@@ -957,7 +1015,7 @@ export class Engine {
   }
 
   /** Writes a discard plan to disk (closed documents). Marks the hunk discarded. */
-  async applyDiscardToDisk(plan: DiscardPlan, hunkId: string): Promise<{ ok: boolean; reason?: 'stale' }> {
+  async applyDiscardToDisk(plan: DiscardPlan, hunkId: string): Promise<{ ok: boolean; reason?: 'stale' | 'io'; message?: string }> {
     const k = pathKey(plan.rel);
     const abs = fromRelPosix(this.folder, plan.rel);
     // the file may have moved on between planning and applying (the agent keeps writing)
@@ -970,7 +1028,15 @@ export class Engine {
     const beforeSha = now.bytes ? await this.deps.store.putBlob(now.bytes) : '';
     const afterSha = sha256(plan.newBytes);
     this.writingOurselves.set(k, afterSha);
-    await this.deps.fs.writeFile(abs, plan.newBytes);
+    try {
+      await this.deps.fs.writeFile(abs, plan.newBytes);
+    } catch (e: any) {
+      // read-only file, no permissions, disk full: report it instead of throwing, so a multi-hunk
+      // discard keeps going and the user gets a sentence rather than a raw rename error (audit C12)
+      this.writingOurselves.delete(k);
+      this.log(`could not write ${plan.rel}: ${String(e?.message ?? e)}`);
+      return { ok: false, reason: 'io', message: String(e?.message ?? e) };
+    }
     this.markDiscarded(plan.rel, hunkId);
     if (this.session) {
       this.session.restores.push({ at: this.now().toISOString(), kind: 'hunk', before: { [plan.rel]: beforeSha }, after: { [plan.rel]: afterSha }, paths: [plan.rel] });
@@ -1013,9 +1079,11 @@ export class Engine {
         results.push({ rel, status: 'skipped', reason: base.reason });
         continue;
       }
-      const cur = await this.deps.fs.readFile(abs);
-      before[rel] = cur ? await this.deps.store.putBlob(cur) : '';
+      // everything that can fail goes inside the try: an I/O error on one path must not abort the
+      // loop and leave the files already written without an undo record (audit C4)
       try {
+        const cur = await this.deps.fs.readFile(abs);
+        before[rel] = cur ? await this.deps.store.putBlob(cur) : '';
         if (base.kind === 'none') {
           if (cur) {
             this.writingOurselves.set(pathKey(rel), '');
@@ -1025,11 +1093,13 @@ export class Engine {
         } else {
           this.writingOurselves.set(pathKey(rel), base.sha);
           const row = this.baselineRow(rel);
+          // `undefined` lets the adapter keep the mode of the file it replaces (C9)
           await this.deps.fs.writeFile(abs, base.bytes, row && row[3] === '100755' ? 0o755 : undefined);
           results.push({ rel, status: 'restored' });
         }
         done.push(rel);
       } catch (e: any) {
+        delete before[rel];
         results.push({ rel, status: 'skipped', reason: e?.message ?? String(e) });
       }
     }
@@ -1186,10 +1256,20 @@ export class Engine {
     const blobs = await store.listBlobs();
     const blobSizes: Record<string, number> = {};
     for (const b of blobs) blobSizes[b.sha] = b.size;
+    // What the running session needs, taken from memory — a corrupt/unreadable index.json makes
+    // readIndex() return an empty index, and without this the GC would delete the baseline of the
+    // session that is open right now (audit C3).
+    const liveRefs = new Set<string>();
+    if (this.baseline) for (const r of this.baseline.rows) if (r[1] === 'store' || (r[1] === 'uncertain' && r[3] === 'store')) liveRefs.add(r[2]);
+    for (const v of Object.values(this.materialized)) if (!v.startsWith('!')) liveRefs.add(v);
+    if (this.session) for (const r of this.session.restores) for (const sha of Object.values(r.before)) if (sha) liveRefs.add(sha);
+    const indexLostOurSession = !!this.session && !idx0.sessions.some((m) => m.id === this.session!.id);
+    if (indexLostOurSession) this.log('gc: the index does not list the running session; blobs are kept');
     // the active session may have changed while we were reading: decide against the freshest index and never drop it
     const activeNow = (await store.readIndex()).activeSessionId ?? this.session?.id;
     const plan = planGc({ now: this.now().getTime(), retentionDays, maxBytes, activeSessionId: activeNow, sessions, blobSizes });
     const drop = new Set(plan.dropSessions.filter((id) => id !== activeNow && id !== this.session?.id));
+    if (indexLostOurSession) drop.clear();
     for (const id of drop) await store.deleteSessionFiles(id);
     await this.withIndex((idx) => {
       idx.sessions = idx.sessions.filter((s) => !drop.has(s.id));
@@ -1200,8 +1280,9 @@ export class Engine {
     const known = new Set(sessions.map((s) => s.id));
     const fresh = (await store.readIndex()).sessions.some((s) => !known.has(s.id));
     let deleted = 0;
-    if (!fresh) {
+    if (!fresh && !indexLostOurSession) {
       for (const sha of plan.deleteBlobs) {
+        if (liveRefs.has(sha)) continue;
         const b = blobs.find((x) => x.sha === sha);
         if (b && b.mtimeMs > young) continue;
         await store.deleteBlob(sha);

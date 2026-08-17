@@ -214,10 +214,26 @@ export class WorkspaceStore {
    * (dead pid) is taken over. `isAlive` is injectable for tests.
    */
   async acquireLock(pid: number, isAlive: (pid: number) => boolean = processAlive): Promise<{ ok: true } | { ok: false; ownerPid: number }> {
-    const cur = await readJson<Lock>(this.lockFile);
-    if (cur && cur.pid !== pid && isAlive(cur.pid)) return { ok: false, ownerPid: cur.pid };
-    await atomicWrite(this.lockFile, JSON.stringify({ pid, since: new Date().toISOString() } as Lock));
-    return { ok: true };
+    const body = JSON.stringify({ pid, since: new Date().toISOString() } as Lock);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      // exclusive create: two windows starting together cannot both believe they own the folder
+      // (read-then-write was a TOCTOU — audit C11)
+      try {
+        await fs.mkdir(path.dirname(this.lockFile), { recursive: true });
+        await fs.writeFile(this.lockFile, body, { flag: 'wx' });
+        return { ok: true };
+      } catch (e: any) {
+        if (!e || e.code !== 'EEXIST') throw e;
+      }
+      const cur = await readJson<Lock>(this.lockFile);
+      if (cur && cur.pid !== pid && isAlive(cur.pid)) return { ok: false, ownerPid: cur.pid };
+      // ours, or a stale lock of a dead process: take it over and re-check we really got it
+      await atomicWrite(this.lockFile, body);
+      const after = await readJson<Lock>(this.lockFile);
+      if (after && after.pid === pid) return { ok: true };
+      if (after && isAlive(after.pid)) return { ok: false, ownerPid: after.pid };
+    }
+    return { ok: false, ownerPid: 0 };
   }
 
   /** pid of a *live* process holding the lock, or undefined. */

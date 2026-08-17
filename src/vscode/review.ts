@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { l10n } from 'vscode';
 import { DiscardPlan } from '../core/engine';
 import { FileChange } from '../core/session';
-import { BASELINE_SCHEME, baselineUri, emptyUri } from './env';
+import { BASELINE_SCHEME, baselineUri, emptyUri, parseBaselineUri } from './env';
 import { FolderGuard } from './folderGuard';
 import { GuardManager } from './guardManager';
 import { FileNode, HunkNode, Node, SessionNode } from './views/tree';
@@ -81,7 +81,9 @@ export class ReviewCommands {
       const sid = g.engine.session!.id;
       for (const c of g.engine.changes()) {
         const file = this.fileUri(g, c.path);
-        const left = c.kind === 'A' ? emptyUri(c.path) : baselineUri(g.folder.uri, c.path, sid);
+        // a rename is compared against its source, like openDiff does: otherwise the whole file
+        // shows up as added in the multi-diff (audit V6)
+        const left = c.kind === 'A' ? emptyUri(c.path) : baselineUri(g.folder.uri, c.kind === 'R' && c.renamedFrom ? c.renamedFrom : c.path, sid);
         const right = c.kind === 'D' ? emptyUri(c.path) : file;
         resources.push([file, left, right]);
       }
@@ -117,7 +119,10 @@ export class ReviewCommands {
     }
     if (!plan.isOpen) {
       const r = await guard.engine.applyDiscardToDisk(plan, hunkId);
-      if (!r.ok) void vscode.window.showWarningMessage(l10n.t('ChangeKeeper: cannot discard this hunk: {0}.', l10n.t('the file changed since this hunk was computed — the view has been refreshed')));
+      if (!r.ok) {
+        const why = r.reason === 'io' ? l10n.t('the file could not be written ({0}) — is it read-only or open in another program?', r.message ?? '') : l10n.t('the file changed since this hunk was computed — the view has been refreshed');
+        void vscode.window.showWarningMessage(l10n.t('ChangeKeeper: cannot discard this hunk: {0}.', why));
+      }
       return r.ok;
     }
     return this.applyPlanToDocument(guard, plan, hunkId);
@@ -244,7 +249,13 @@ export class ReviewCommands {
    */
   private async hunkAtCursor(arg?: any): Promise<{ guard: FolderGuard; rel: string; ids: string[] } | undefined> {
     const editor = vscode.window.activeTextEditor;
-    const modifiedUri: vscode.Uri | undefined = arg instanceof vscode.Uri ? arg : arg?.modifiedUri ?? editor?.document.uri;
+    let modifiedUri: vscode.Uri | undefined = arg instanceof vscode.Uri ? arg : arg?.modifiedUri ?? editor?.document.uri;
+    // The cursor may sit on the LEFT side of the diff, whose document is `ck-baseline:`. That side
+    // knows its folder and path, so resolve the real file from it instead of giving up (audit V5).
+    if (modifiedUri && modifiedUri.scheme === BASELINE_SCHEME) {
+      const parsed = parseBaselineUri(modifiedUri);
+      modifiedUri = parsed ? vscode.Uri.joinPath(vscode.Uri.parse(parsed.folder.toString()), ...parsed.rel.split('/')) : undefined;
+    }
     if (!modifiedUri || modifiedUri.scheme !== 'file') return undefined;
     const guard = this.manager.guardFor(modifiedUri);
     const rel = guard?.engine.relOf(modifiedUri.fsPath);
